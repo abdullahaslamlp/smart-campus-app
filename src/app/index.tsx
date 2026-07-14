@@ -137,12 +137,22 @@ export default function SmartCampusMVP() {
   };
 
   const handleResetDemo = async () => {
-    await supabase.from('students').update({ status: 'waiting' }).neq('status', 'waiting');
+    // Reset all students to waiting and clear their stored distances
+    await supabase.from('students').update({ status: 'waiting', last_distance_meters: null }).neq('id', '');
     setIsCheckedIn(false);
-    setDistance(120);
+    setDistance(geofenceRadius + 70);
   };
 
   // ── Parent Handlers ──
+  // Central function: update distance in state AND in Supabase for all this parent's students
+  const updateParentDistance = async (newDist: number) => {
+    setDistance(newDist);
+    await supabase
+      .from('students')
+      .update({ last_distance_meters: newDist })
+      .eq('parent_id', 'parent_001');
+  };
+
   const checkLocation = async () => {
     try {
       let perm = locationStatus;
@@ -152,7 +162,7 @@ export default function SmartCampusMVP() {
       const dist = getDistanceFromLatLonInMeters(
         loc.coords.latitude, loc.coords.longitude, schoolLocation.lat, schoolLocation.lng
       );
-      setDistance(Math.round(dist));
+      await updateParentDistance(Math.round(dist));
     } catch (err) {
       alert('Error getting location: ' + (err as Error).message);
     }
@@ -163,6 +173,238 @@ export default function SmartCampusMVP() {
     const { error } = await supabase
       .from('students').update({ status: 'dispatched' }).eq('parent_id', 'parent_001');
     if (!error) setIsCheckedIn(true);
+  };
+
+  // ─── NAV SECTION RENDERERS ────────────────────────────────────────────────
+
+  const renderStudentDirectory = () => {
+    const filtered = students.filter(s =>
+      !searchQuery ||
+      s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      s.grade?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      s.gate?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    return (
+      <View style={styles.logsPanel}>
+        <View style={styles.logsPanelHeader}>
+          <Text style={styles.panelTitle}>👥 Student Directory</Text>
+          <Text style={[styles.filterBtnText, { color: '#416183' }]}>{filtered.length} students</Text>
+        </View>
+        <View style={styles.tableHeader}>
+          {['Name', 'Grade', 'Gate', 'Guardian ID', 'Last Distance', 'Status'].map(h => (
+            <Text key={h} style={[styles.tableHead, h === 'Name' ? { flex: 2 } : {}]}>{h}</Text>
+          ))}
+        </View>
+        <ScrollView>
+          {filtered.map(item => {
+            const getStatusStyle = (s: string) => s === 'dispatched'
+              ? { bg: '#d1e4ff', text: '#001d35' }
+              : s === 'arrived' ? { bg: '#b7d7ff', text: '#28496a' }
+              : { bg: '#e2e2e4', text: '#43474d' };
+            const st = getStatusStyle(item.status);
+            return (
+              <View key={item.id} style={styles.tableRow}>
+                <Text style={[styles.tableCell, styles.tableCellBold, { flex: 2 }]}>{item.name}</Text>
+                <Text style={styles.tableCell}>{item.grade || '—'}</Text>
+                <Text style={styles.tableCell}>{item.gate || '—'}</Text>
+                <Text style={[styles.tableCell, styles.tableCellMuted]}>{item.parent_id}</Text>
+                <Text style={[styles.tableCell, { color: '#466179' }]}>
+                  {item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}
+                </Text>
+                <View style={styles.tableCell}>
+                  <View style={[styles.statusPill, { backgroundColor: st.bg }]}>
+                    <Text style={[styles.statusPillText, { color: st.text }]}>
+                      {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderGuardianRoster = () => {
+    // Group students by parent_id
+    const guardianMap: Record<string, any[]> = {};
+    students.forEach(s => {
+      if (!guardianMap[s.parent_id]) guardianMap[s.parent_id] = [];
+      guardianMap[s.parent_id].push(s);
+    });
+    const filtered = Object.entries(guardianMap).filter(([pid]) =>
+      !searchQuery || pid.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      guardianMap[pid].some(s => s.name?.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+    return (
+      <View style={styles.logsPanel}>
+        <View style={styles.logsPanelHeader}>
+          <Text style={styles.panelTitle}>👨‍👩‍👧 Guardian Roster</Text>
+          <Text style={[styles.filterBtnText, { color: '#416183' }]}>{filtered.length} guardians</Text>
+        </View>
+        <View style={styles.tableHeader}>
+          {['Guardian ID', 'Children', 'Gates', 'Last Distance', 'Status'].map(h => (
+            <Text key={h} style={[styles.tableHead, h === 'Children' ? { flex: 2 } : {}]}>{h}</Text>
+          ))}
+        </View>
+        <ScrollView>
+          {filtered.map(([parentId, kids]) => {
+            const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
+            const allDispatched = kids.every(k => k.status === 'dispatched');
+            const anyDispatched = kids.some(k => k.status === 'dispatched');
+            const statusBg = allDispatched ? '#d1e4ff' : anyDispatched ? '#b7d7ff' : '#e2e2e4';
+            const statusText = allDispatched ? '#001d35' : anyDispatched ? '#28496a' : '#43474d';
+            const statusLabel = allDispatched ? 'All Dispatched' : anyDispatched ? 'Partial' : 'Waiting';
+            return (
+              <View key={parentId} style={styles.tableRow}>
+                <Text style={[styles.tableCell, styles.tableCellBold]}>{parentId}</Text>
+                <View style={[styles.tableCell, { flex: 2 }]}>
+                  {kids.map(k => (
+                    <Text key={k.id} style={{ fontSize: 12, color: '#1a1c1d' }}>• {k.name}</Text>
+                  ))}
+                </View>
+                <Text style={styles.tableCell}>{[...new Set(kids.map(k => k.gate))].join(', ') || '—'}</Text>
+                <Text style={[styles.tableCell, { color: '#466179' }]}>
+                  {dist != null ? `${dist}m` : '—'}
+                </Text>
+                <View style={styles.tableCell}>
+                  <View style={[styles.statusPill, { backgroundColor: statusBg }]}>
+                    <Text style={[styles.statusPillText, { color: statusText }]}>{statusLabel}</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderGeofenceConfig = () => (
+    <View style={{ flex: 1, gap: 20 }}>
+      <View style={styles.logsPanel}>
+        <View style={styles.logsPanelHeader}>
+          <Text style={styles.panelTitle}>🗺️ Geofence Configuration</Text>
+        </View>
+        <View style={{ padding: 24, gap: 20 }}>
+          {/* Coordinates */}
+          <View style={{ gap: 8 }}>
+            <Text style={[styles.tableHead, { fontSize: 13 }]}>SCHOOL GATE COORDINATES</Text>
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              <View style={{ flex: 1, backgroundColor: '#f4f3f5', borderRadius: 8, padding: 14, borderWidth: 1, borderColor: '#c3c7cd' }}>
+                <Text style={{ fontSize: 11, color: '#767779', fontWeight: '700', marginBottom: 4 }}>LATITUDE</Text>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: SLATE_PRIMARY }}>{schoolLocation.lat.toFixed(6)}</Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: '#f4f3f5', borderRadius: 8, padding: 14, borderWidth: 1, borderColor: '#c3c7cd' }}>
+                <Text style={{ fontSize: 11, color: '#767779', fontWeight: '700', marginBottom: 4 }}>LONGITUDE</Text>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: SLATE_PRIMARY }}>{schoolLocation.lng.toFixed(6)}</Text>
+              </View>
+            </View>
+          </View>
+          {/* Radius slider */}
+          <View style={{ gap: 8 }}>
+            <Text style={[styles.tableHead, { fontSize: 13 }]}>DETECTION RADIUS</Text>
+            <View style={styles.sliderLabels}>
+              <Text style={styles.sliderMinMax}>50m</Text>
+              <Text style={styles.sliderValue}>{tempRadius}m</Text>
+              <Text style={styles.sliderMinMax}>500m</Text>
+            </View>
+            {Platform.OS === 'web' ? (
+              // @ts-ignore
+              <input type="range" min="50" max="500" value={tempRadius}
+                onChange={(e: any) => setTempRadius(Number(e.target.value))}
+                style={{ width: '100%', height: 6, accentColor: SLATE_PRIMARY, cursor: 'pointer', marginTop: 4 }}
+              />
+            ) : (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                {[50, 100, 150, 200, 300, 500].map(v => (
+                  <Pressable key={v} style={[styles.radiusChip, tempRadius === v && styles.radiusChipActive]}
+                    onPress={() => setTempRadius(v)}>
+                    <Text style={[styles.radiusChipText, tempRadius === v && { color: '#fff' }]}>{v}m</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+          {/* Map picker */}
+          <Pressable style={styles.mapPinBtn} onPress={() => setIsMapOpen(true)}>
+            <Text style={styles.mapPinBtnText}>📍 Change School Gate Pin on Map</Text>
+          </Pressable>
+          {/* Map preview */}
+          {Platform.OS === 'web' && (
+            <View style={{ height: 300, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#c3c7cd' }}>
+              {/* @ts-ignore */}
+              <iframe
+                srcDoc={`<!DOCTYPE html><html><head>
+                  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+                  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                  <style>body,html,#map{margin:0;padding:0;height:100%;width:100%;}</style>
+                </head><body><div id="map"></div>
+                <script>
+                  const map = L.map('map').setView([${schoolLocation.lat},${schoolLocation.lng}],15);
+                  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                  L.marker([${schoolLocation.lat},${schoolLocation.lng}]).addTo(map).bindPopup('School Gate').openPopup();
+                  L.circle([${schoolLocation.lat},${schoolLocation.lng}],{radius:${geofenceRadius},color:'#466179',fillOpacity:0.15}).addTo(map);
+                </script></body></html>`}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+              />
+            </View>
+          )}
+          <Pressable style={[styles.saveBtn, radiusSaved && { backgroundColor: '#10B981' }]}
+            onPress={saveGeofenceRadius}>
+            <Text style={styles.saveBtnText}>{radiusSaved ? '✅ Saved!' : '💾 Save Configuration'}</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderDispatchLogs = () => {
+    const allDispatched = students.filter(s => s.status === 'dispatched');
+    const waiting = students.filter(s => s.status === 'waiting');
+    return (
+      <View style={styles.logsPanel}>
+        <View style={styles.logsPanelHeader}>
+          <Text style={styles.panelTitle}>📋 Dispatch Logs</Text>
+          <Pressable style={styles.filterBtn} onPress={handleResetDemo}>
+            <Text style={styles.filterBtnText}>🔄 Reset All</Text>
+          </Pressable>
+        </View>
+        <View style={styles.tableHeader}>
+          {['Time', 'Student Name', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
+            <Text key={h} style={[styles.tableHead, h === 'Student Name' ? { flex: 2 } : {}]}>{h}</Text>
+          ))}
+        </View>
+        <ScrollView>
+          {[...allDispatched, ...waiting].map(item => {
+            const getStatusStyle = (s: string) => s === 'dispatched'
+              ? { bg: '#d1e4ff', text: '#001d35' } : { bg: '#e2e2e4', text: '#43474d' };
+            const st = getStatusStyle(item.status);
+            return (
+              <View key={item.id} style={styles.tableRow}>
+                <Text style={[styles.tableCell, styles.tableCellMuted]}>
+                  {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </Text>
+                <Text style={[styles.tableCell, styles.tableCellBold, { flex: 2 }]}>{item.name}</Text>
+                <Text style={styles.tableCell}>{item.parent_id}</Text>
+                <Text style={styles.tableCell}>{item.gate || '—'}</Text>
+                <Text style={[styles.tableCell, { color: '#466179' }]}>
+                  {item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}
+                </Text>
+                <View style={styles.tableCell}>
+                  <View style={[styles.statusPill, { backgroundColor: st.bg }]}>
+                    <Text style={[styles.statusPillText, { color: st.text }]}>
+                      {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
   };
 
   // ─── RENDER ADMIN PORTAL ─────────────────────────────────────────────────
@@ -278,12 +520,15 @@ export default function SmartCampusMVP() {
           </View>
 
           {/* ── Dashboard Canvas ── */}
-          <ScrollView
-            style={styles.canvas}
-            contentContainerStyle={{ paddingBottom: 48 }}
-          >
+          <ScrollView style={styles.canvas} contentContainerStyle={{ paddingBottom: 48 }}>
 
-            {/* KPI Row */}
+            {/* Non-dashboard sections */}
+            {activeNav !== 'dashboard' && renderAdminMainContent()}
+
+            {/* Dashboard-only: KPI row + split */}
+            {activeNav === 'dashboard' && (
+              <>
+
             <View style={styles.kpiRow}>
               {[
                 { label: 'TOTAL STUDENTS', value: String(students.length || 842), sub: '+12 since morning', subColor: '#416183', icon: '👥' },
@@ -326,7 +571,7 @@ export default function SmartCampusMVP() {
                   ))}
                 </View>
 
-                {/* Table Rows */}
+              {/* Table Rows - distance now read from DB column, not random */}
                 {filteredStudents.length > 0 ? filteredStudents.map((item) => {
                   const st = getStatusStyle(item.status);
                   return (
@@ -342,7 +587,7 @@ export default function SmartCampusMVP() {
                       <Text style={styles.tableCell}>{item.parent_id}</Text>
                       <Text style={styles.tableCell}>{item.gate || '—'}</Text>
                       <Text style={[styles.tableCell, { color: '#466179' }]}>
-                        {item.status === 'dispatched' ? '—' : `${Math.round(Math.random() * 200 + 40)}m`}
+                        {item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}
                       </Text>
                       <View style={styles.tableCell}>
                         <View style={[styles.statusPill, { backgroundColor: st.bg }]}>
@@ -354,7 +599,6 @@ export default function SmartCampusMVP() {
                     </Pressable>
                   );
                 }) : (
-                  // Demo rows if no data
                   [
                     { ts: '14:32:05', name: 'Emma Thompson', guardian: 'Sarah T. (Mom)', gate: 'North Gate', dist: '120m', status: 'Arrived', bg: '#b7d7ff', tc: '#28496a' },
                     { ts: '14:31:12', name: 'Liam Davis', guardian: 'Michael D. (Dad)', gate: 'South Gate', dist: '250m', status: 'Waiting', bg: '#e2e2e4', tc: '#43474d' },
@@ -386,8 +630,6 @@ export default function SmartCampusMVP() {
                 <Text style={styles.controlsDesc}>
                   Adjust the detection radius for automatic arrival triggers.
                 </Text>
-
-                {/* Radius Slider */}
                 <View style={styles.sliderSection}>
                   <View style={styles.sliderLabels}>
                     <Text style={styles.sliderMinMax}>50m</Text>
@@ -396,50 +638,35 @@ export default function SmartCampusMVP() {
                   </View>
                   {Platform.OS === 'web' ? (
                     // @ts-ignore
-                    <input
-                      type="range"
-                      min="50"
-                      max="500"
-                      value={tempRadius}
+                    <input type="range" min="50" max="500" value={tempRadius}
                       onChange={(e: any) => setTempRadius(Number(e.target.value))}
                       style={{ width: '100%', height: 6, accentColor: SLATE_PRIMARY, cursor: 'pointer', marginTop: 4 }}
                     />
                   ) : (
-                    // Fallback tap buttons for native
                     <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                       {[50, 100, 150, 200, 300, 500].map(v => (
-                        <Pressable
-                          key={v}
-                          style={[styles.radiusChip, tempRadius === v && styles.radiusChipActive]}
-                          onPress={() => setTempRadius(v)}
-                        >
+                        <Pressable key={v} style={[styles.radiusChip, tempRadius === v && styles.radiusChipActive]}
+                          onPress={() => setTempRadius(v)}>
                           <Text style={[styles.radiusChipText, tempRadius === v && { color: '#fff' }]}>{v}m</Text>
                         </Pressable>
                       ))}
                     </View>
                   )}
                 </View>
-
-                {/* Map Pin Button */}
                 <Pressable style={styles.mapPinBtn} onPress={() => setIsMapOpen(true)}>
                   <Text style={styles.mapPinBtnText}>📍 Set School Gate Pin on Map</Text>
                 </Pressable>
-
                 <Text style={styles.pinCoordsText}>
                   📌 {schoolLocation.lat.toFixed(4)}, {schoolLocation.lng.toFixed(4)}
                 </Text>
-
-                {/* Save Button */}
-                <Pressable
-                  style={[styles.saveBtn, radiusSaved && { backgroundColor: '#10B981' }]}
-                  onPress={saveGeofenceRadius}
-                >
-                  <Text style={styles.saveBtnText}>
-                    {radiusSaved ? '✅ Saved!' : '💾 Save Configuration'}
-                  </Text>
+                <Pressable style={[styles.saveBtn, radiusSaved && { backgroundColor: '#10B981' }]}
+                  onPress={saveGeofenceRadius}>
+                  <Text style={styles.saveBtnText}>{radiusSaved ? '✅ Saved!' : '💾 Save Configuration'}</Text>
                 </Pressable>
               </View>
             </View>
+            </>
+            )}
           </ScrollView>
         </View>
 
@@ -496,6 +723,17 @@ export default function SmartCampusMVP() {
     );
   };
 
+  // ─── Main content router based on activeNav ───────────────────────────────
+  const renderAdminMainContent = () => {
+    switch (activeNav) {
+      case 'students': return renderStudentDirectory();
+      case 'guardians': return renderGuardianRoster();
+      case 'geofence': return renderGeofenceConfig();
+      case 'logs': return renderDispatchLogs();
+      default: return null; // dashboard content rendered inline below
+    }
+  };
+
   // ─── RENDER PARENT APP ───────────────────────────────────────────────────
   const renderParentView = () => {
     const parentChildren = students.filter(s => s.parent_id === 'parent_001');
@@ -530,10 +768,10 @@ export default function SmartCampusMVP() {
               <Text style={styles.gpsButtonText}>UPDATE GPS LOCATION</Text>
             </Pressable>
             <View style={styles.simControlsRow}>
-              <Pressable style={styles.simControlBtn} onPress={() => setDistance(geofenceRadius + 70)}>
+              <Pressable style={styles.simControlBtn} onPress={() => updateParentDistance(geofenceRadius + 70)}>
                 <Text style={styles.simControlText}>Far ({geofenceRadius + 70}m)</Text>
               </Pressable>
-              <Pressable style={styles.simControlBtn} onPress={() => setDistance(Math.round(geofenceRadius * 0.3))}>
+              <Pressable style={styles.simControlBtn} onPress={() => updateParentDistance(Math.round(geofenceRadius * 0.3))}>
                 <Text style={styles.simControlText}>Near ({Math.round(geofenceRadius * 0.3)}m)</Text>
               </Pressable>
             </View>
