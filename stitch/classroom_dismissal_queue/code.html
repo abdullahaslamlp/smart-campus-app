@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SafePass - Classroom Board</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">tailwind.config = {darkMode: "class", theme: {extend: {colors: {"inverse-on-surface": "#f1f0f2", tertiary: "#635c64", "surface-container": "#eeedf0", "on-error": "#ffffff", "on-secondary": "#ffffff", background: "#f9f9fb", "surface-container-lowest": "#ffffff", "on-primary-fixed-variant": "#2e4960", "primary-container": "#92adc8", "secondary-fixed": "#d1e4ff", "tertiary-fixed": "#eadfe9", "on-tertiary-fixed": "#1f1a21", "surface-container-high": "#e8e8ea", secondary: "#416183", outline: "#73777e", "on-tertiary-container": "#423c44", "tertiary-fixed-dim": "#cdc4cd", "surface-variant": "#e2e2e4", primary: "#466179", "primary-fixed-dim": "#aecae6", "surface-dim": "#dadadc", "on-tertiary-fixed-variant": "#4b454d", "on-primary-container": "#264158", "on-background": "#1a1c1d", "secondary-container": "#b7d7ff", "surface-tint": "#466179", "surface-container-low": "#f4f3f5", "on-error-container": "#93000a", "primary-fixed": "#cce5ff", "on-secondary-container": "#3e5e80", "surface-container-highest": "#e2e2e4", "on-primary": "#ffffff", surface: "#f9f9fb", "surface-bright": "#f9f9fb", "on-secondary-fixed-variant": "#28496a", "inverse-primary": "#aecae6", error: "#ba1a1a", "on-secondary-fixed": "#001d35", "on-tertiary": "#ffffff", "outline-variant": "#c3c7ce", "tertiary-container": "#b0a7b1", "secondary-fixed-dim": "#a9c9f1", "on-surface-variant": "#43474d", "error-container": "#ffdad6", "on-surface": "#1a1c1d", "inverse-surface": "#2f3132", "on-primary-fixed": "#001d31"}, borderRadius: {DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px"}, spacing: {"margin-mobile": "16px", "touch-target-min": "44px", "card-gap": "12px", unit: "8px", gutter: "16px", "margin-desktop": "32px"}, fontFamily: {"headline-lg-mobile": ["Inter"], "body-lg": ["Inter"], "body-metadata": ["Inter"], "headline-md": ["Inter"], "display-status": ["Inter"], "headline-lg": ["Inter"], "label-caps": ["Inter"], headline: ["Inter"], display: ["Inter"], body: ["Inter"], label: ["Inter"]}, fontSize: {"headline-lg-mobile": ["24px", {lineHeight: "32px", fontWeight: "700"}], "body-lg": ["17px", {lineHeight: "24px", fontWeight: "400"}], "body-metadata": ["14px", {lineHeight: "20px", fontWeight: "500"}], "headline-md": ["20px", {lineHeight: "28px", fontWeight: "600"}], "display-status": ["48px", {lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-lg": ["32px", {lineHeight: "40px", fontWeight: "700"}], "label-caps": ["12px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "700"}]}}}};</script>
+<style>
+        .spring-up {
+            animation: springUp 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        @keyframes springUp {
+            0% { transform: translateY(20px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+        .flash-border {
+            animation: flashGreen 1s ease-out;
+        }
+        @keyframes flashGreen {
+            0%, 100% { border-color: #e0e3e5; }
+            50% { border-color: #009e6d; }
+        }
+    </style>
+</head>
+<body class="bg-primary-container text-on-primary min-h-screen flex flex-col font-body-lg">
+<!-- Header -->
+<header class="flex justify-between items-center px-margin-desktop py-4 border-b border-surface-tint">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-4xl" data-icon="school">school</span>
+<div>
+<h1 class="font-headline-lg text-headline-lg m-0">Campus Dismissal</h1>
+<p class="font-body-metadata text-body-metadata text-on-primary-container">Room 104 • Mr. Davis</p>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2 bg-secondary rounded-full px-4 py-2">
+<div class="w-3 h-3 rounded-full bg-tertiary-fixed-dim animate-pulse"></div>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">Live Session</span>
+</div>
+<div class="font-display-status text-display-status tabular-nums" id="clock">14:52:00</div>
+</div>
+</header>
+<!-- Main Board -->
+<main class="flex-1 p-margin-desktop overflow-y-auto">
+<!-- Stats Row -->
+<div class="grid grid-cols-4 gap-card-gap mb-gutter">
+<div class="bg-surface-tint rounded-xl p-4 flex flex-col">
+<span class="font-label-caps text-label-caps text-on-primary-container uppercase">Remaining</span>
+<span class="font-headline-lg text-headline-lg">24</span>
+</div>
+<div class="bg-surface-tint rounded-xl p-4 flex flex-col">
+<span class="font-label-caps text-label-caps text-on-primary-container uppercase">Dispatched</span>
+<span class="font-headline-lg text-headline-lg text-tertiary-fixed-dim">3</span>
+</div>
+</div>
+<!-- Student Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-card-gap" id="student-grid">
+<!-- Dispatched Student (Simulated recent action) -->
+<div class="bg-surface text-on-surface rounded-xl border-l-8 border-tertiary-fixed p-4 shadow-sm flex flex-col gap-2 relative overflow-hidden transition-all duration-300 transform" onclick="triggerDispatch(this)">
+<div class="flex justify-between items-start">
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container-high px-2 py-1 rounded">Gate B</span>
+<span class="font-label-caps text-label-caps text-on-tertiary-container bg-tertiary-fixed px-2 py-1 rounded font-bold uppercase tracking-wider">Dispatched</span>
+</div>
+<h2 class="font-headline-md text-headline-md mt-2">Emma Thompson</h2>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm" data-icon="directions_car">directions_car</span>
+<span class="font-body-metadata text-body-metadata">Car 402 - Parent Arrived</span>
+</div>
+</div>
+<!-- Waiting Students -->
+<div class="bg-surface text-on-surface rounded-xl border border-outline-variant p-4 flex flex-col gap-2 transition-all duration-300" onclick="triggerDispatch(this)">
+<div class="flex justify-between items-start">
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container-high px-2 py-1 rounded">Gate A</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-variant px-2 py-1 rounded uppercase tracking-wider">Waiting</span>
+</div>
+<h2 class="font-headline-md text-headline-md mt-2">Lucas Wright</h2>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm" data-icon="directions_walk">directions_walk</span>
+<span class="font-body-metadata text-body-metadata">Walker</span>
+</div>
+</div>
+<div class="bg-surface text-on-surface rounded-xl border border-outline-variant p-4 flex flex-col gap-2 transition-all duration-300" onclick="triggerDispatch(this)">
+<div class="flex justify-between items-start">
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container-high px-2 py-1 rounded">Gate C</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-variant px-2 py-1 rounded uppercase tracking-wider">Waiting</span>
+</div>
+<h2 class="font-headline-md text-headline-md mt-2">Sophia Martinez</h2>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm" data-icon="directions_bus">directions_bus</span>
+<span class="font-body-metadata text-body-metadata">Bus 42</span>
+</div>
+</div>
+<div class="bg-surface text-on-surface rounded-xl border border-outline-variant p-4 flex flex-col gap-2 transition-all duration-300" onclick="triggerDispatch(this)">
+<div class="flex justify-between items-start">
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container-high px-2 py-1 rounded">Gate B</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-variant px-2 py-1 rounded uppercase tracking-wider">Waiting</span>
+</div>
+<h2 class="font-headline-md text-headline-md mt-2">Jackson Lee</h2>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm" data-icon="directions_car">directions_car</span>
+<span class="font-body-metadata text-body-metadata">Car 115</span>
+</div>
+</div>
+</div>
+</main>
+<script>
+        // Real-time clock
+        function updateClock() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            document.getElementById('clock').textContent = timeString;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Interaction Simulation
+        function triggerDispatch(element) {
+            // Only act if it's currently "Waiting"
+            const statusBadge = element.querySelector('span:nth-child(2)');
+            if (statusBadge.textContent.trim() === 'Waiting') {
+                
+                // Visual updates to the card itself
+                element.classList.remove('border', 'border-outline-variant');
+                element.classList.add('border-l-8', 'border-tertiary-fixed', 'shadow-sm', 'flash-border');
+                
+                statusBadge.textContent = 'DISPATCHED';
+                statusBadge.className = 'font-label-caps text-label-caps text-on-tertiary-container bg-tertiary-fixed px-2 py-1 rounded font-bold uppercase tracking-wider';
+
+                // Re-order to top with animation
+                const grid = document.getElementById('student-grid');
+                element.classList.add('spring-up');
+                grid.insertBefore(element, grid.firstChild);
+                
+                // Cleanup animation class
+                setTimeout(() => {
+                    element.classList.remove('spring-up', 'flash-border');
+                }, 1000);
+            }
+        }
+    </script>
+</body></html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
+<title>SafePass - Parent App</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">tailwind.config = {darkMode: "class", theme: {extend: {colors: {"inverse-on-surface": "#f1f0f2", tertiary: "#635c64", "surface-container": "#eeedf0", "on-error": "#ffffff", "on-secondary": "#ffffff", background: "#f9f9fb", "surface-container-lowest": "#ffffff", "on-primary-fixed-variant": "#2e4960", "primary-container": "#92adc8", "secondary-fixed": "#d1e4ff", "tertiary-fixed": "#eadfe9", "on-tertiary-fixed": "#1f1a21", "surface-container-high": "#e8e8ea", secondary: "#416183", outline: "#73777e", "on-tertiary-container": "#423c44", "tertiary-fixed-dim": "#cdc4cd", "surface-variant": "#e2e2e4", primary: "#466179", "primary-fixed-dim": "#aecae6", "surface-dim": "#dadadc", "on-tertiary-fixed-variant": "#4b454d", "on-primary-container": "#264158", "on-background": "#1a1c1d", "secondary-container": "#b7d7ff", "surface-tint": "#466179", "surface-container-low": "#f4f3f5", "on-error-container": "#93000a", "primary-fixed": "#cce5ff", "on-secondary-container": "#3e5e80", "surface-container-highest": "#e2e2e4", "on-primary": "#ffffff", surface: "#f9f9fb", "surface-bright": "#f9f9fb", "on-secondary-fixed-variant": "#28496a", "inverse-primary": "#aecae6", error: "#ba1a1a", "on-secondary-fixed": "#001d35", "on-tertiary": "#ffffff", "outline-variant": "#c3c7ce", "tertiary-container": "#b0a7b1", "secondary-fixed-dim": "#a9c9f1", "on-surface-variant": "#43474d", "error-container": "#ffdad6", "on-surface": "#1a1c1d", "inverse-surface": "#2f3132", "on-primary-fixed": "#001d31"}, borderRadius: {DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px"}, spacing: {"margin-mobile": "16px", "touch-target-min": "44px", "card-gap": "12px", unit: "8px", gutter: "16px", "margin-desktop": "32px"}, fontFamily: {"headline-lg-mobile": ["Inter"], "body-lg": ["Inter"], "body-metadata": ["Inter"], "headline-md": ["Inter"], "display-status": ["Inter"], "headline-lg": ["Inter"], "label-caps": ["Inter"], headline: ["Inter"], display: ["Inter"], body: ["Inter"], label: ["Inter"]}, fontSize: {"headline-lg-mobile": ["24px", {lineHeight: "32px", fontWeight: "700"}], "body-lg": ["17px", {lineHeight: "24px", fontWeight: "400"}], "body-metadata": ["14px", {lineHeight: "20px", fontWeight: "500"}], "headline-md": ["20px", {lineHeight: "28px", fontWeight: "600"}], "display-status": ["48px", {lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-lg": ["32px", {lineHeight: "40px", fontWeight: "700"}], "label-caps": ["12px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "700"}]}}}};</script>
+<style>
+        .pulse-ring {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .5; transform: scale(1.05); }
+        }
+        .slide-track {
+            background-color: #10B981; /* Emerald Green */
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body-lg antialiased flex flex-col min-h-screen pb-safe">
+<!-- TopAppBar (Based on JSON Component) -->
+<header class="fixed top-0 w-full z-50 bg-surface border-b border-outline-variant flex justify-between items-center h-16 px-margin-mobile max-w-full flat no shadows">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">school</span>
+<span class="font-headline-md text-headline-md font-bold text-primary">SafePass</span>
+</div>
+<div class="h-10 w-10 rounded-full overflow-hidden bg-surface-variant flex items-center justify-center border border-outline-variant">
+<img alt="Parent Profile Avatar" class="h-full w-full object-cover" data-alt="A close-up, high-quality photograph of a professional adult's face, serving as a user profile avatar. The person is smiling warmly, set against a clean, neutral white background. The lighting is soft and even, creating a friendly and approachable corporate aesthetic suitable for an enterprise school app." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBHca5LGRBNre3wlQunBCfpC6_Ur9db-Lj4CfxucdR_2y8lVk1FzncPXRNozRWS4QJLx28LZraRgEZvdkY7H4BBTVfzeWzuHZr_7qRpp51uuehDJ8JBrm8mE5mRUJ7R5inpJznBa0hjFfh2A5innRCodtkSfOElsqieRSpNIT4bTjPv6jfByanryAC1-ZNx9xC7pqun7opbIiZ54VU6gvJZ0lXzKFictb07oaMY5WkgoA88-4QdOWby"/>
+</div>
+</header>
+<main class="flex-grow pt-20 px-margin-mobile pb-32 flex flex-col gap-6">
+<!-- Geofence Status Hero -->
+<section class="bg-surface-container-lowest rounded-xl p-6 border border-outline-variant flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden shadow-sm">
+<div class="absolute inset-0 opacity-5 pointer-events-none" style="background-image: radial-gradient(circle at center, #000f22 0%, transparent 70%);"></div>
+<div class="relative w-24 h-24 flex items-center justify-center">
+<!-- Pulse Rings -->
+<div class="absolute inset-0 bg-primary/20 rounded-full pulse-ring" style="animation-delay: 0s;"></div>
+<div class="absolute inset-2 bg-primary/30 rounded-full pulse-ring" style="animation-delay: 0.5s;"></div>
+<div class="relative z-10 bg-primary text-on-primary h-12 w-12 rounded-full flex items-center justify-center shadow-md">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">location_on</span>
+</div>
+</div>
+<div>
+<h2 class="font-display-status text-display-status text-primary tracking-tight">120m</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant mt-1">from North Campus Gate</p>
+</div>
+<div class="inline-flex items-center gap-1.5 bg-surface-container-high px-3 py-1 rounded-full mt-2">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="font-label-caps text-label-caps text-secondary uppercase tracking-wider">Calculating ETA</span>
+</div>
+</section>
+<!-- Children List -->
+<section class="flex flex-col gap-card-gap">
+<h3 class="font-headline-md text-headline-md text-on-background mb-2">My Students</h3>
+<!-- Child Card 1 -->
+<div class="bg-surface-container-lowest rounded-lg border border-outline-variant p-4 flex items-center gap-4 relative overflow-hidden shadow-sm">
+<div class="absolute left-0 top-0 bottom-0 w-1.5 bg-[#10B981]"></div>
+<div class="h-12 w-12 rounded-full bg-surface-variant flex-shrink-0 border border-outline-variant overflow-hidden">
+<img alt="Student Avatar" class="h-full w-full object-cover" data-alt="A clear, head-and-shoulders portrait of a young elementary school student, smiling gently. The background is a simple, blurred light-grey studio setting. The lighting is bright and professional, conveying a safe and welcoming tone suitable for a school administration app." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD8SI1zIrTq9sjUJ78Z_8mnXFrrqSnwaghm8D6LsvkpqvGEeAyFqxTRJJLQX5Obb7R0vFkA3Tq9_Zodr5l16ZVSmxbMD1289MMm9Gj6Wu4nY9O-o9ByCpMtpRUijekD4QwNvVPtY277ogMUbCrDqAEkLOVCHXSnKXSiBXtSmUz9p-wPCsQD-eeRYLnnhVauBzJ7V-P0pDB1spaWAHycm_hWuCEWDtB4U1svBXAFGFJOxXADg1aNW018"/>
+</div>
+<div class="flex-grow">
+<h4 class="font-headline-md text-headline-md text-on-background">Leo</h4>
+<p class="font-body-metadata text-body-metadata text-on-surface-variant">2nd Grade • Room 204</p>
+</div>
+<div class="flex flex-col items-end">
+<span class="inline-block px-2.5 py-1 rounded-md bg-[#D1FAE5] text-[#065F46] font-label-caps text-label-caps uppercase">Ready</span>
+</div>
+</div>
+<!-- Child Card 2 -->
+<div class="bg-surface-container-lowest rounded-lg border border-outline-variant p-4 flex items-center gap-4 relative overflow-hidden shadow-sm">
+<div class="absolute left-0 top-0 bottom-0 w-1.5 bg-[#F59E0B]"></div>
+<div class="h-12 w-12 rounded-full bg-surface-variant flex-shrink-0 border border-outline-variant overflow-hidden">
+<img alt="Student Avatar" class="h-full w-full object-cover" data-alt="A portrait of a middle school student looking attentively forward. The setting is a neutral, soft-focus light background. The lighting is studio-quality and even, ensuring the face is clearly visible, maintaining a formal and secure aesthetic for an educational software interface." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCarQlWAHNqF20G4BaSkbygpjpFDalO-B4FfPlQAH080ZIuy2HVyi_WFKvTOFYeX9Tsm2iOZHFN-sG9Pp9irps6xiAzUB-U0hYp02U2m1EPS0dbYdvrKJWXtFXclAY4er7GR0phJ-noVyfOGSu7XQwaz4KCZKoxQW5petEXuDaUNbkIKcw8vmNprufiazF2_6xuMC8mDt9l7lqhSUyDZJn5vzRGmnrsszqiEvcw-3W-smJPw4ygJP_J"/>
+</div>
+<div class="flex-grow">
+<h4 class="font-headline-md text-headline-md text-on-background">Maya</h4>
+<p class="font-body-metadata text-body-metadata text-on-surface-variant">5th Grade • Room 512</p>
+</div>
+<div class="flex flex-col items-end">
+<span class="inline-block px-2.5 py-1 rounded-md bg-[#FEF3C7] text-[#92400E] font-label-caps text-label-caps uppercase">In Class</span>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Action Area -->
+<div class="fixed bottom-0 left-0 w-full bg-surface/90 backdrop-blur-md border-t border-outline-variant p-margin-mobile pb-[max(16px,env(safe-area-inset-bottom))] z-40">
+<!-- Disabled State Example for Swipe (Since out of range) -->
+<div class="relative w-full h-[60px] bg-surface-container-high rounded-full overflow-hidden flex items-center justify-center opacity-70">
+<span class="font-headline-md text-headline-md text-on-surface-variant z-10 pointer-events-none">Too far to Check-in</span>
+<div class="absolute left-1 top-1 bottom-1 w-[52px] bg-surface-variant rounded-full flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-outline">chevron_right</span>
+</div>
+</div>
+<!-- 
+        Active State Example (Hidden in this view, but structure provided)
+        <div class="relative w-full h-[60px] slide-track rounded-full overflow-hidden flex items-center justify-center shadow-md">
+            <span class="font-headline-md text-headline-md text-white z-10 pointer-events-none drop-shadow-md">Slide to Check-In</span>
+            <div class="absolute left-1 top-1 bottom-1 w-[52px] bg-white rounded-full flex items-center justify-center shadow-sm cursor-grab active:cursor-grabbing">
+                <span class="material-symbols-outlined text-[#10B981]">chevron_right</span>
+            </div>
+        </div>
+        -->
+</div>
+</body></html>
