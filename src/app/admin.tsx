@@ -114,6 +114,7 @@ export default function AdminPortal() {
   const [na_password, setNa_password] = useState('');
   const [na_phone, setNa_phone] = useState('');
   const [na_loading, setNa_loading] = useState(false);
+  const [accountModalError, setAccountModalError] = useState('');
 
   // ─── PIN Login ─────────────────────────────────────────────────────────────
   const handlePinLogin = () => {
@@ -254,12 +255,14 @@ export default function AdminPortal() {
   // ─── Parent Account CRUD ──────────────────────────────────────────────────
   const openAddAccount = () => {
     setEditAccount(null);
+    setAccountModalError('');
     setNa_parentId(''); setNa_fullName(''); setNa_password('safepass123'); setNa_phone('');
     setAddAccountOpen(true);
   };
 
   const openEditAccount = (acc: ParentAccount) => {
     setEditAccount(acc);
+    setAccountModalError('');
     setNa_parentId(acc.parent_id); setNa_fullName(acc.full_name);
     setNa_password(acc.password); setNa_phone(acc.phone || '');
     setAddAccountOpen(true);
@@ -267,28 +270,42 @@ export default function AdminPortal() {
 
   const handleSaveAccount = async () => {
     if (!na_parentId.trim() || !na_fullName.trim() || !na_password.trim()) {
-      Alert.alert('Validation', 'Parent ID, Full Name, and Password are required.'); return;
+      setAccountModalError('Parent ID, Full Name, and Password are required.');
+      return;
     }
+    setAccountModalError('');
     setNa_loading(true);
     try {
       if (editAccount) {
-        // Update existing
         const { error } = await supabase.from('parent_accounts')
           .update({ full_name: na_fullName.trim(), password: na_password.trim(), phone: na_phone.trim() || null })
           .eq('id', editAccount.id);
         if (error) throw error;
       } else {
-        // Create new
         const trimId = na_parentId.trim().toLowerCase();
         const { error } = await supabase.from('parent_accounts').insert({
-          parent_id: trimId, full_name: na_fullName.trim(),
-          password: na_password.trim(), phone: na_phone.trim() || null, is_active: true,
+          parent_id: trimId,
+          full_name: na_fullName.trim(),
+          password: na_password.trim(),
+          phone: na_phone.trim() || null,
+          is_active: true,
         });
         if (error) throw error;
       }
       setAddAccountOpen(false);
-    } catch (e: any) { Alert.alert('Error saving account', e.message); }
-    finally { setNa_loading(false); }
+    } catch (e: any) {
+      // Show error inside the modal so it's never missed
+      const msg: string = e.message || String(e);
+      if (msg.includes('duplicate') || msg.includes('unique')) {
+        setAccountModalError(`A parent account with ID "${na_parentId.trim()}" already exists. Use a different ID or edit the existing account.`);
+      } else if (msg.includes('does not exist') || msg.includes('relation')) {
+        setAccountModalError('The parent_accounts table is missing. Please run the SQL migration in Supabase first.');
+      } else {
+        setAccountModalError(msg);
+      }
+    } finally {
+      setNa_loading(false);
+    }
   };
 
   const handleToggleActive = async (acc: ParentAccount) => {
@@ -895,6 +912,12 @@ export default function AdminPortal() {
               {editAccount ? 'Update this parent\'s details.' : 'Create login credentials for a parent.'}
             </Text>
             <View style={{ gap: 12, marginTop: 8 }}>
+              {/* ── Inline error banner ── */}
+              {accountModalError ? (
+                <View style={s.errorBanner}>
+                  <Text style={s.errorText}>⚠️  {accountModalError}</Text>
+                </View>
+              ) : null}
               <View style={{ gap: 4 }}>
                 <Text style={s.formLabel}>Parent ID *</Text>
                 {Platform.OS === 'web' ? (
