@@ -833,10 +833,41 @@ export default function AdminPortal() {
           </View>
         </View>
 
-        <ScrollView style={s.canvas} contentContainerStyle={{ paddingBottom: 48 }}>
+        <ScrollView style={s.canvas} contentContainerStyle={{ paddingBottom: Platform.OS === 'web' ? 48 : 110 }}>
           {renderContent()}
         </ScrollView>
       </View>
+
+      {/* ── Mobile Bottom Navigation (hidden on web where sidebar shows) ── */}
+      {Platform.OS !== 'web' && (
+        <View style={s.mobileBottomNav}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4, paddingHorizontal: 8 }}>
+            {([
+              { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
+              { id: 'students',   label: 'Students',   icon: '👥' },
+              { id: 'guardians',  label: 'Guardians',  icon: '👨‍👩‍👧' },
+              { id: 'geofence',   label: 'Geofence',   icon: '🗺️' },
+              { id: 'logs',       label: 'Logs',       icon: '📋' },
+              { id: 'accounts',   label: 'Accounts',   icon: '🔑' },
+            ] as { id: NavSection; label: string; icon: string }[]).map(item => (
+              <Pressable key={item.id}
+                style={[s.mobileNavItem, activeNav === item.id && s.mobileNavItemActive]}
+                onPress={() => setActiveNav(item.id)}>
+                <Text style={{ fontSize: 18 }}>{item.icon}</Text>
+                <Text style={[s.mobileNavLabel, activeNav === item.id && { color: SLATE, fontWeight: '700' }]}>{item.label}</Text>
+              </Pressable>
+            ))}
+            <Pressable style={s.mobileNavItem} onPress={() => router.replace('/')}>
+              <Text style={{ fontSize: 18 }}>🏠</Text>
+              <Text style={s.mobileNavLabel}>Home</Text>
+            </Pressable>
+            <Pressable style={s.mobileNavItem} onPress={() => { setPinAuthed(false); setPinInput(''); }}>
+              <Text style={{ fontSize: 18 }}>🔒</Text>
+              <Text style={s.mobileNavLabel}>Lock</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      )}
 
       {/* Map Modal */}
       {isMapOpen && (
@@ -983,7 +1014,14 @@ const s = StyleSheet.create({
   sidebarBottom: { borderTopWidth: 1, borderTopColor: BORDER, paddingVertical: 10, paddingHorizontal: 8, gap: 3 },
 
   main: { flex: 1, flexDirection: 'column' },
-  topHeader: { height: 60, backgroundColor: WHITE, borderBottomWidth: 1, borderBottomColor: BORDER, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, zIndex: 20 },
+  topHeader: {
+    backgroundColor: WHITE, borderBottomWidth: 1, borderBottomColor: BORDER,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 24, zIndex: 20,
+    height: Platform.OS === 'web' ? 60 : undefined,
+    paddingTop: Platform.OS === 'web' ? 0 : 44,
+    paddingBottom: Platform.OS === 'web' ? 0 : 10,
+  },
   searchBarWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e8e8ea', borderRadius: 8, paddingHorizontal: 10, height: 38, width: Platform.OS === 'web' ? 320 : 180 },
   searchWeb: { flex: 1, fontSize: 14, fontFamily: 'inherit' } as any,
   searchNative: { flex: 1, fontSize: 14, color: TEXT },
@@ -1049,4 +1087,19 @@ const s = StyleSheet.create({
   formLabel: { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.4 },
   formInput: { borderWidth: 1.5, borderColor: BORDER, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: TEXT, backgroundColor: '#fafafa' },
   formInputWeb: { borderWidth: 1.5, borderStyle: 'solid', borderColor: BORDER, borderRadius: 8, paddingLeft: 12, paddingRight: 12, height: 42, fontSize: 14, color: TEXT, backgroundColor: '#fafafa', fontFamily: 'inherit', width: '100%' } as any,
+
+  // Mobile bottom nav
+  mobileBottomNav: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: WHITE, borderTopWidth: 1, borderTopColor: BORDER,
+    paddingVertical: 8, paddingBottom: 24, zIndex: 50,
+    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: -2 }, elevation: 8,
+  },
+  mobileNavItem: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12, gap: 2, minWidth: 72,
+  },
+  mobileNavItemActive: { backgroundColor: SLATE_LIGHT },
+  mobileNavLabel: { fontSize: 10, fontWeight: '600', color: MUTED, textAlign: 'center' },
 });
+

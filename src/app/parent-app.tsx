@@ -78,11 +78,11 @@ export default function ParentApp() {
         .eq('parent_id', pid);
       if (error) throw error;
       setStudents(data || []);
-      // Restore last known distance from any linked student
+      // Always sync isCheckedIn from DB — resets when admin clears status
+      setIsCheckedIn((data || []).some((s: any) => s.status === 'dispatched'));
+      // Restore last known distance; reset to null if admin cleared it
       const distRow = (data || []).find((s: any) => s.last_distance_meters != null);
-      if (distRow) setDistance(distRow.last_distance_meters);
-      // Check if already checked in this session
-      if ((data || []).some((s: any) => s.status === 'dispatched')) setIsCheckedIn(true);
+      setDistance(distRow ? distRow.last_distance_meters : null);
     } catch (e: any) {
       console.error('[fetchData]', e.message);
     } finally {
@@ -298,7 +298,10 @@ const styles = StyleSheet.create({
   topBar: {
     height: 64, backgroundColor: WHITE,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: BORDER,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'web' ? 0 : 44,   // clear Expo dev-client buttons on mobile
+    paddingBottom: Platform.OS === 'web' ? 0 : 10,
+    borderBottomWidth: 1, borderBottomColor: BORDER,
     shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
   topGreeting: { fontSize: 17, fontWeight: '700', color: SLATE_DARK },
