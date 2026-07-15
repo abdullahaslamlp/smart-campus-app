@@ -40,6 +40,36 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// ─── FormField (must be outside component to keep stable identity across renders) ──
+function FormField({ label, value, setter, placeholder, secret = false }: {
+  label: string; value: string; setter: (v: string) => void;
+  placeholder: string; secret?: boolean;
+}) {
+  return (
+    <View style={{ gap: 4 }}>
+      <Text style={s.formLabel}>{label}</Text>
+      {Platform.OS === 'web' ? (
+        // @ts-ignore
+        <input
+          style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e: any) => setter(e.target.value)}
+        />
+      ) : (
+        <TextInput
+          style={s.formInput}
+          placeholder={placeholder}
+          value={value}
+          onChangeText={setter}
+          secureTextEntry={secret}
+          placeholderTextColor={MUTED}
+        />
+      )}
+    </View>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminPortal() {
   const router = useRouter();
@@ -288,22 +318,6 @@ export default function AdminPortal() {
     if (s === 'arrived') return { bg: '#b7d7ff', text: '#28496a' };
     return { bg: '#e2e2e4', text: '#43474d' };
   };
-
-  // ─── Shared form input component ──────────────────────────────────────────
-  const FormField = ({ label, value, setter, placeholder, secret = false }: any) => (
-    <View style={{ gap: 4 }}>
-      <Text style={s.formLabel}>{label}</Text>
-      {Platform.OS === 'web' ? (
-        // @ts-ignore
-        <input style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any} type={secret ? 'text' : 'text'}
-          placeholder={placeholder} value={value}
-          onChange={(e: any) => setter(e.target.value)} />
-      ) : (
-        <TextInput style={s.formInput} placeholder={placeholder} value={value}
-          onChangeText={setter} secureTextEntry={secret} placeholderTextColor={MUTED} />
-      )}
-    </View>
-  );
 
   // ─── PIN Gate ─────────────────────────────────────────────────────────────
   if (!pinAuthed) {
