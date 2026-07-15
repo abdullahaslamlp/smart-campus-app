@@ -119,30 +119,32 @@ export default function AdminPortal() {
   const handlePinLogin = () => {
     if (pinInput.trim() === ADMIN_PIN) {
       setPinAuthed(true);
-      initData();
+      // Data loading is handled by the useEffect below
     } else {
       setPinError('Incorrect PIN. Please try again.');
       setPinInput('');
     }
   };
 
-  // ─── Data Init ────────────────────────────────────────────────────────────
-  const initData = () => {
+  // ─── Data Init via useEffect (runs once when PIN is accepted, cleans up on unmount) ─
+  useEffect(() => {
+    if (!pinAuthed) return;
+
     fetchStudents();
     fetchAccounts();
     fetchSettings();
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
 
-    const studentSub = supabase.channel('admin_students')
+    const studentSub = supabase.channel('admin_students_' + Date.now())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, fetchStudents)
       .subscribe();
 
-    const accountSub = supabase.channel('admin_accounts')
+    const accountSub = supabase.channel('admin_accounts_' + Date.now())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'parent_accounts' }, fetchAccounts)
       .subscribe();
 
-    const settingsSub = supabase.channel('admin_settings')
+    const settingsSub = supabase.channel('admin_settings_' + Date.now())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'school_settings' }, (p) => {
         const row = p.new as any;
         if (!row?.lat) return;
@@ -152,20 +154,20 @@ export default function AdminPortal() {
       })
       .subscribe();
 
-    if (Platform.OS === 'web') {
-      window.addEventListener('message', (e: MessageEvent) => {
-        if (e.data?.type === 'UPDATE_LOCATION')
-          setTempLocation({ lat: e.data.lat, lng: e.data.lng });
-      });
-    }
+    const handleMapMessage = (e: MessageEvent) => {
+      if (e.data?.type === 'UPDATE_LOCATION')
+        setTempLocation({ lat: e.data.lat, lng: e.data.lng });
+    };
+    if (Platform.OS === 'web') window.addEventListener('message', handleMapMessage);
 
     return () => {
       clearInterval(timer);
       supabase.removeChannel(studentSub);
       supabase.removeChannel(accountSub);
       supabase.removeChannel(settingsSub);
+      if (Platform.OS === 'web') window.removeEventListener('message', handleMapMessage);
     };
-  };
+  }, [pinAuthed]);
 
   const fetchStudents = async () => {
     try {
