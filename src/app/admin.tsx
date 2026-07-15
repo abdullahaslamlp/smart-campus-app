@@ -295,7 +295,7 @@ export default function AdminPortal() {
       <Text style={s.formLabel}>{label}</Text>
       {Platform.OS === 'web' ? (
         // @ts-ignore
-        <input style={s.formInputWeb} type={secret ? 'text' : 'text'}
+        <input style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any} type={secret ? 'text' : 'text'}
           placeholder={placeholder} value={value}
           onChange={(e: any) => setter(e.target.value)} />
       ) : (
@@ -324,7 +324,7 @@ export default function AdminPortal() {
               {Platform.OS === 'web' ? (
                 // @ts-ignore
                 <input
-                  style={{ ...s.formInputWeb, flex: 1 } as any}
+                  style={{ ...s.formInputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
                   type={showPin ? 'text' : 'password'}
                   placeholder="Enter PIN"
                   value={pinInput}
@@ -784,7 +784,7 @@ export default function AdminPortal() {
             <Text>🔍 </Text>
             {Platform.OS === 'web' ? (
               // @ts-ignore
-              <input style={s.searchWeb as any} placeholder="Search students or guardians…"
+              <input style={{ ...s.searchWeb, border: 'none', background: 'transparent', outline: 'none' } as any} placeholder="Search students or guardians…"
                 value={searchQuery} onChange={(e: any) => setSearchQuery(e.target.value)} />
             ) : (
               <TextInput style={s.searchNative} placeholder="Search…" value={searchQuery}
@@ -883,7 +883,7 @@ export default function AdminPortal() {
                 <Text style={s.formLabel}>Parent ID *</Text>
                 {Platform.OS === 'web' ? (
                   // @ts-ignore
-                  <input style={s.formInputWeb as any}
+                  <input style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any}
                     placeholder="e.g. parent_005"
                     value={na_parentId}
                     onChange={(e: any) => setNa_parentId(e.target.value)}
@@ -946,7 +946,7 @@ const s = StyleSheet.create({
   main: { flex: 1, flexDirection: 'column' },
   topHeader: { height: 60, backgroundColor: WHITE, borderBottomWidth: 1, borderBottomColor: BORDER, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, zIndex: 20 },
   searchBarWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e8e8ea', borderRadius: 8, paddingHorizontal: 10, height: 38, width: Platform.OS === 'web' ? 320 : 180 },
-  searchWeb: { flex: 1, fontSize: 14, border: 'none', background: 'transparent', outline: 'none', fontFamily: 'inherit' } as any,
+  searchWeb: { flex: 1, fontSize: 14, fontFamily: 'inherit' } as any,
   searchNative: { flex: 1, fontSize: 14, color: TEXT },
   gpsBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#b7d7ff', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, gap: 6 },
   gpsDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#10B981' },
@@ -1009,5 +1009,5 @@ const s = StyleSheet.create({
   // Form
   formLabel: { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.4 },
   formInput: { borderWidth: 1.5, borderColor: BORDER, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: TEXT, backgroundColor: '#fafafa' },
-  formInputWeb: { border: '1.5px solid ' + BORDER, borderRadius: 8, paddingLeft: 12, paddingRight: 12, height: 42, fontSize: 14, color: TEXT, backgroundColor: '#fafafa', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box', outline: 'none' } as any,
+  formInputWeb: { borderWidth: 1.5, borderStyle: 'solid', borderColor: BORDER, borderRadius: 8, paddingLeft: 12, paddingRight: 12, height: 42, fontSize: 14, color: TEXT, backgroundColor: '#fafafa', fontFamily: 'inherit', width: '100%' } as any,
 });

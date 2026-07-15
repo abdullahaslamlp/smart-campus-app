@@ -122,7 +122,7 @@ export default function ParentLogin() {
           {Platform.OS === 'web' ? (
             // @ts-ignore
             <input
-              style={styles.inputWeb as any}
+              style={{ ...styles.inputWeb, outline: 'none', boxSizing: 'border-box' } as any}
               placeholder="e.g. parent_001"
               value={parentId}
               onChange={(e: any) => setParentId(e.target.value)}
@@ -146,7 +146,7 @@ export default function ParentLogin() {
             {Platform.OS === 'web' ? (
               // @ts-ignore
               <input
-                style={{ ...styles.inputWeb, flex: 1 } as any}
+                style={{ ...styles.inputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
                 type={showPassword ? 'text' : 'password'}
                 placeholder="Enter your password"
                 value={password}
@@ -226,7 +226,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderStyle: 'solid', borderColor: BORDER, borderRadius: 10,
     paddingLeft: 14, paddingRight: 14, height: 46, fontSize: 15,
     color: '#1a1c1d', backgroundColor: '#fafafa', fontFamily: 'inherit',
-    width: '100%', boxSizing: 'border-box', outline: 'none',
+    width: '100%',
   } as any,
   passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   eyeBtn: { padding: 8 },
