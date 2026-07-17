@@ -224,6 +224,13 @@ export default function AdminPortal() {
     };
   }, [pinAuthed]);
 
+  // Re-fetch whenever switching to a data-heavy tab so stale-closure inserts are always visible
+  useEffect(() => {
+    if (!pinAuthed) return;
+    if (activeNav === 'accounts') fetchAccounts();
+    if (activeNav === 'students' || activeNav === 'guardians' || activeNav === 'dashboard' || activeNav === 'logs') fetchStudents();
+  }, [activeNav, pinAuthed]);
+
   const fetchStudents = async () => {
     try {
       const { data, error } = await supabase.from('students').select('*').order('status');
@@ -703,6 +710,9 @@ export default function AdminPortal() {
         <Text style={s.panelTitle}>🔑 Parent Accounts</Text>
         <View style={s.panelHeaderRight}>
           <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{accounts.length} accounts</Text>
+          <Pressable style={s.smBtn} onPress={fetchAccounts} disabled={accountsLoading}>
+            {accountsLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Refresh</Text>}
+          </Pressable>
           <Pressable style={[s.smBtn, { backgroundColor: SLATE }]} onPress={openAddAccount}>
             <Text style={[s.smBtnText, { color: WHITE }]}>+ New Account</Text>
           </Pressable>
