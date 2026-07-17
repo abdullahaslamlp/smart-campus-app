@@ -70,6 +70,48 @@ function FormField({ label, value, setter, placeholder, secret = false }: {
   );
 }
 
+// ─── FilterBar (stable module-level component to avoid remount focus loss) ──
+function FilterBar({ classes, sections, filterClass, filterSection, onClassChange, onSectionChange }: {
+  classes: string[]; sections: string[];
+  filterClass: string; filterSection: string;
+  onClassChange: (v: string) => void; onSectionChange: (v: string) => void;
+}) {
+  return (
+    <View style={{ gap: 6, marginBottom: 12 }}>
+      {/* Class row */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
+        <Pressable onPress={() => { onClassChange(''); onSectionChange(''); }}
+          style={[s.filterChip, !filterClass && s.filterChipActive]}>
+          <Text style={[s.filterChipTxt, !filterClass && s.filterChipTxtActive]}>All Classes</Text>
+        </Pressable>
+        {classes.map(c => (
+          <Pressable key={c} onPress={() => { onClassChange(c); onSectionChange(''); }}
+            style={[s.filterChip, filterClass === c && s.filterChipActive]}>
+            <Text style={[s.filterChipTxt, filterClass === c && s.filterChipTxtActive]}>Grade {c}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {/* Section row — only shows when a class is selected */}
+      {filterClass ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
+          <Pressable onPress={() => onSectionChange('')}
+            style={[s.filterChip, s.filterChipSec, !filterSection && s.filterChipSecActive]}>
+            <Text style={[s.filterChipTxt, !filterSection && s.filterChipTxtActive]}>All Sections</Text>
+          </Pressable>
+          {sections.map(sec => (
+            <Pressable key={sec} onPress={() => onSectionChange(sec)}
+              style={[s.filterChip, s.filterChipSec, filterSection === sec && s.filterChipSecActive]}>
+              <Text style={[s.filterChipTxt, filterSection === sec && s.filterChipTxtActive]}>Section {sec}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminPortal() {
   const router = useRouter();
@@ -88,6 +130,8 @@ export default function AdminPortal() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [activeNav, setActiveNav] = useState<NavSection>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterClass, setFilterClass] = useState('');
+  const [filterSection, setFilterSection] = useState('');
 
   // ── Geofence state ──
   const [schoolLocation, setSchoolLocation] = useState({ lat: 31.4501, lng: 74.3012 });
@@ -389,20 +433,55 @@ export default function AdminPortal() {
   }
 
   // ─── ADMIN PORTAL ─────────────────────────────────────────────────────────
+  // Parse "Grade 5-A" → { cls: '5', sec: 'A' }
+  const parseGrade = (grade?: string | null) => {
+    if (!grade) return { cls: '', sec: '' };
+    const m = grade.match(/(\d+)-([A-Za-z]+)/);
+    return m ? { cls: m[1], sec: m[2].toUpperCase() } : { cls: '', sec: '' };
+  };
+
+  // Unique sorted class numbers across all students
+  const allClasses = [...new Set(
+    students.map(x => parseGrade(x.grade).cls).filter(Boolean)
+  )].sort((a, b) => Number(a) - Number(b));
+
+  // Sections available within the selected class
+  const allSections = [...new Set(
+    students
+      .filter(x => !filterClass || parseGrade(x.grade).cls === filterClass)
+      .map(x => parseGrade(x.grade).sec)
+      .filter(Boolean)
+  )].sort();
+
+  // Central filter helper
+  const applyFilter = (list: Student[]) => list.filter(x => {
+    const { cls, sec } = parseGrade(x.grade);
+    const matchClass   = !filterClass   || cls === filterClass;
+    const matchSection = !filterSection || sec === filterSection;
+    const matchSearch  = !searchQuery   ||
+      x.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      x.parent_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      x.grade?.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchClass && matchSection && matchSearch;
+  });
+
   const dispatchedCount = students.filter(x => x.status === 'dispatched').length;
-  const filtered = students.filter(x =>
-    !searchQuery ||
-    x.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    x.parent_id?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Legacy filtered (dashboard uses applyFilter below)
+  const filtered = applyFilter(students);
 
   const renderDashboard = () => (
     <>
+      {/* Class / Section filter bar */}
+      <FilterBar
+        classes={allClasses} sections={allSections}
+        filterClass={filterClass} filterSection={filterSection}
+        onClassChange={setFilterClass} onSectionChange={setFilterSection}
+      />
       {/* KPI Row */}
       <View style={s.kpiRow}>
         {[
-          { label: 'TOTAL STUDENTS', value: studentsLoading ? '…' : String(students.length), sub: 'Enrolled', icon: '👥', subColor: SLATE },
-          { label: 'ACTIVE DISMISSALS', value: String(dispatchedCount), sub: 'In progress', icon: '🚶', subColor: SLATE },
+          { label: 'TOTAL STUDENTS', value: studentsLoading ? '…' : String(filtered.length === students.length ? students.length : `${filtered.length}/${students.length}`), sub: filterClass ? `Grade ${filterClass}${filterSection ? '-' + filterSection : ''}` : 'Enrolled', icon: '👥', subColor: SLATE },
+          { label: 'ACTIVE DISMISSALS', value: String(filtered.filter(x => x.status === 'dispatched').length), sub: 'In progress', icon: '🚶', subColor: SLATE },
           { label: 'PARENT ACCOUNTS', value: accountsLoading ? '…' : String(accounts.length), sub: String(accounts.filter(a => a.is_active).length) + ' active', icon: '👨‍👩‍👧', subColor: '#10B981' },
           { label: 'GEOFENCE RADIUS', value: `${geofenceRadius}m`, sub: 'Standard Range', icon: '📡', subColor: MUTED },
         ].map((kpi, i) => (
@@ -437,7 +516,7 @@ export default function AdminPortal() {
           {studentsLoading ? (
             <View style={s.loader}><ActivityIndicator color={SLATE} /><Text style={s.loaderText}>Loading…</Text></View>
           ) : filtered.length === 0 ? (
-            <View style={s.loader}><Text style={s.loaderText}>No students yet. Add via Student Directory.</Text></View>
+            <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
           ) : filtered.map(item => {
             const st = statusStyle(item.status);
             return (
@@ -505,10 +584,7 @@ export default function AdminPortal() {
   );
 
   const renderStudentDirectory = () => {
-    const filtSt = students.filter(x =>
-      !searchQuery || x.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      x.grade?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filtSt = applyFilter(students);
     return (
       <View style={s.panel}>
         <View style={s.panelHeader}>
@@ -520,6 +596,14 @@ export default function AdminPortal() {
             </Pressable>
           </View>
         </View>
+        {/* Filter bar */}
+        <View style={{ paddingHorizontal: 0, paddingBottom: 4 }}>
+          <FilterBar
+            classes={allClasses} sections={allSections}
+            filterClass={filterClass} filterSection={filterSection}
+            onClassChange={setFilterClass} onSectionChange={setFilterSection}
+          />
+        </View>
         <View style={s.tableHeader}>
           {['Name', 'Grade', 'Gate', 'Guardian ID', 'Last Distance', 'Status'].map(h => (
             <Text key={h} style={[s.th, h === 'Name' ? { flex: 2 } : {}]}>{h}</Text>
@@ -527,7 +611,7 @@ export default function AdminPortal() {
         </View>
         <ScrollView>
           {studentsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
-            : filtSt.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No students found.</Text></View>
+            : filtSt.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
             : filtSt.map(item => {
               const st = statusStyle(item.status);
               return (
@@ -551,17 +635,24 @@ export default function AdminPortal() {
   };
 
   const renderGuardianRoster = () => {
+    // Filter students first, then group by parent
+    const filtSt = applyFilter(students);
     const map: Record<string, Student[]> = {};
-    students.forEach(s => { if (!map[s.parent_id]) map[s.parent_id] = []; map[s.parent_id].push(s); });
-    const pairs = Object.entries(map).filter(([pid]) =>
-      !searchQuery || pid.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      map[pid].some(x => x.name?.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
+    filtSt.forEach(s => { if (!map[s.parent_id]) map[s.parent_id] = []; map[s.parent_id].push(s); });
+    const pairs = Object.entries(map);
     return (
       <View style={s.panel}>
         <View style={s.panelHeader}>
           <Text style={s.panelTitle}>👨‍👩‍👧 Guardian Roster</Text>
           <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{pairs.length} guardians</Text>
+        </View>
+        {/* Filter bar */}
+        <View style={{ paddingBottom: 4 }}>
+          <FilterBar
+            classes={allClasses} sections={allSections}
+            filterClass={filterClass} filterSection={filterSection}
+            onClassChange={setFilterClass} onSectionChange={setFilterSection}
+          />
         </View>
         <View style={s.tableHeader}>
           {['Guardian ID', 'Children', 'Gates', 'Last Distance', 'Status'].map(h => (
@@ -569,7 +660,9 @@ export default function AdminPortal() {
           ))}
         </View>
         <ScrollView>
-          {pairs.map(([pid, kids]) => {
+          {pairs.length === 0
+            ? <View style={s.loader}><Text style={s.loaderText}>No guardians match this filter.</Text></View>
+            : pairs.map(([pid, kids]) => {
             const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
             const allD = kids.every(k => k.status === 'dispatched');
             const anyD = kids.some(k => k.status === 'dispatched');
@@ -713,7 +806,7 @@ export default function AdminPortal() {
   );
 
   const renderDispatchLogs = () => {
-    const sorted = [...students].sort((a, b) => {
+    const sorted = [...applyFilter(students)].sort((a, b) => {
       const o: Record<string, number> = { dispatched: 0, arrived: 1, waiting: 2 };
       return (o[a.status] ?? 3) - (o[b.status] ?? 3);
     });
@@ -725,13 +818,23 @@ export default function AdminPortal() {
             {resetLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Reset All</Text>}
           </Pressable>
         </View>
+        {/* Filter bar */}
+        <View style={{ paddingBottom: 4 }}>
+          <FilterBar
+            classes={allClasses} sections={allSections}
+            filterClass={filterClass} filterSection={filterSection}
+            onClassChange={setFilterClass} onSectionChange={setFilterSection}
+          />
+        </View>
         <View style={s.tableHeader}>
-          {['Time', 'Student', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
+          {['Time', 'Student', 'Grade', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
             <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
           ))}
         </View>
         <ScrollView>
-          {sorted.map(item => {
+          {sorted.length === 0
+            ? <View style={s.loader}><Text style={s.loaderText}>No dispatch records match this filter.</Text></View>
+            : sorted.map(item => {
             const st = statusStyle(item.status);
             return (
               <View key={item.id} style={s.tableRow}>
@@ -739,6 +842,7 @@ export default function AdminPortal() {
                   {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </Text>
                 <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
+                <Text style={[s.td, { color: MUTED, fontSize: 11 }]}>{item.grade || '—'}</Text>
                 <Text style={s.td}>{item.parent_id}</Text>
                 <Text style={s.td}>{item.gate || '—'}</Text>
                 <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
@@ -1087,6 +1191,17 @@ const s = StyleSheet.create({
   formLabel: { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.4 },
   formInput: { borderWidth: 1.5, borderColor: BORDER, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: TEXT, backgroundColor: '#fafafa' },
   formInputWeb: { borderWidth: 1.5, borderStyle: 'solid', borderColor: BORDER, borderRadius: 8, paddingLeft: 12, paddingRight: 12, height: 42, fontSize: 14, color: TEXT, backgroundColor: '#fafafa', fontFamily: 'inherit', width: '100%' } as any,
+
+  // Class / Section filter chips
+  filterChip: {
+    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20,
+    borderWidth: 1.5, borderColor: BORDER, backgroundColor: WHITE,
+  },
+  filterChipActive: { backgroundColor: SLATE, borderColor: SLATE },
+  filterChipSec: { borderColor: '#a0aec0', backgroundColor: '#f7f8fa' },
+  filterChipSecActive: { backgroundColor: SLATE_LIGHT, borderColor: SLATE },
+  filterChipTxt: { fontSize: 12, fontWeight: '600', color: MUTED },
+  filterChipTxtActive: { color: WHITE },
 
   // Mobile bottom nav
   mobileBottomNav: {
