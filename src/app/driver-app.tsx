@@ -155,9 +155,19 @@ export default function DriverApp() {
     }
   };
 
+  // ── Check if driver is within allowed geofence distance ──
+  const isCloseEnough = distance !== null && distance <= geofenceRadius;
+
   // ── Dispatch all waiting students assigned to this driver ──
   const handleCheckInAll = async () => {
     if (!driverInfo || !driverInfo.linkedParentIds.length) return;
+    if (!isCloseEnough) {
+      Alert.alert(
+        '🚫 Geofence Restriction',
+        `Your distance is ${distance ?? '—'}m from the school gate. You must be within ${geofenceRadius}m to notify the gate!`
+      );
+      return;
+    }
     const waitingKids = students.filter(s => s.status === 'waiting');
     if (waitingKids.length === 0) {
       Alert.alert('Notice', 'All assigned students have already been dispatched!');
@@ -168,7 +178,7 @@ export default function DriverApp() {
     try {
       const { error } = await supabase
         .from('students')
-        .update({ status: 'dispatched', last_distance_meters: distance || 50 })
+        .update({ status: 'dispatched', last_distance_meters: distance })
         .in('parent_id', driverInfo.linkedParentIds)
         .eq('status', 'waiting');
       if (error) throw error;
@@ -213,7 +223,7 @@ export default function DriverApp() {
         </Pressable>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 130 }}>
 
         {/* ── Status Card ── */}
         <View style={styles.heroCard}>
@@ -246,11 +256,23 @@ export default function DriverApp() {
                 <Text style={styles.gpsBtnText}>📍 Get My Live GPS Distance</Text>
               )}
             </Pressable>
+
             {distance != null && (
-              <Text style={{ fontSize: 13, fontWeight: '700', color: GREEN_DARK }}>
+              <Text style={{ fontSize: 14, fontWeight: '800', color: isCloseEnough ? GREEN_DARK : '#c0392b' }}>
                 Current Distance to Gate: {distance} meters
               </Text>
             )}
+
+            {/* Geofence Status Badge */}
+            <View style={[styles.radiusBadge, { backgroundColor: isCloseEnough ? GREEN_BG : '#fee2e2' }]}>
+              <Text style={[styles.radiusBadgeText, { color: isCloseEnough ? GREEN_DARK : '#c0392b' }]}>
+                {distance == null
+                  ? `📍 Set location to check in (Geofence Max: ${geofenceRadius}m)`
+                  : isCloseEnough
+                    ? `✅ Within range (${distance}m ≤ ${geofenceRadius}m)`
+                    : `⚠️ Outside Geofence Area (${distance}m > ${geofenceRadius}m max)`}
+              </Text>
+            </View>
 
             <View style={styles.simRow}>
               <Text style={{ fontSize: 11, color: '#767779', fontWeight: '600' }}>Simulate Distance:</Text>
@@ -310,15 +332,22 @@ export default function DriverApp() {
       {/* ── Check-in Action Bar ── */}
       <View style={styles.bottomBar}>
         <Pressable
-          style={[styles.checkInBtn, waitingCount === 0 && styles.checkInDisabled]}
+          style={[
+            styles.checkInBtn,
+            (!isCloseEnough || waitingCount === 0 || dispatching) && styles.checkInDisabled,
+          ]}
           onPress={handleCheckInAll}
-          disabled={waitingCount === 0 || dispatching}
+          disabled={!isCloseEnough || waitingCount === 0 || dispatching}
         >
           {dispatching ? (
             <ActivityIndicator color={WHITE} />
           ) : (
-            <Text style={styles.checkInBtnText}>
-              {waitingCount === 0 ? '✓ All Students Dispatched' : `🛺 Notify Gate for All (${waitingCount} Waiting)`}
+            <Text style={[styles.checkInBtnText, (!isCloseEnough || waitingCount === 0) && { color: '#767779' }]}>
+              {waitingCount === 0
+                ? '✓ All Students Dispatched'
+                : !isCloseEnough
+                  ? `🚫 Too Far — Must be ≤${geofenceRadius}m (${distance ?? '—'}m)`
+                  : `🛺 Notify Gate for All (${waitingCount} Waiting)`}
             </Text>
           )}
         </Pressable>
@@ -361,6 +390,8 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', marginTop: 2 },
   gpsBtn: { backgroundColor: GREEN_DARK, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10, alignSelf: 'stretch', alignItems: 'center' },
   gpsBtnText: { color: WHITE, fontWeight: '700', fontSize: 14 },
+  radiusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  radiusBadgeText: { fontSize: 12, fontWeight: '700' },
   simRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   simBtn: { backgroundColor: '#e8e8ea', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6 },
   simBtnActive: { backgroundColor: GREEN_DARK },
