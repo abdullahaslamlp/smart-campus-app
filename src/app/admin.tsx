@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import {
   ActivityIndicator, Alert, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, View,
+  useWindowDimensions,
 } from 'react-native';
 import { supabase } from '../../supabase';
 
@@ -121,6 +122,8 @@ function FilterBar({ classes, sections, filterClass, filterSection, onClassChang
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminPortal() {
   const router = useRouter();
+  const { width: windowWidth } = useWindowDimensions();
+  const isMobile = Platform.OS !== 'web' || windowWidth < 768;
 
   // ── PIN gate ──
   const [pinAuthed, setPinAuthed] = useState(false);
@@ -525,35 +528,39 @@ export default function AdminPortal() {
               </Pressable>
             </View>
           </View>
-          <View style={s.tableHeader}>
-            {['Time', 'Student', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
-              <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
-            ))}
-          </View>
-          {studentsLoading ? (
-            <View style={s.loader}><ActivityIndicator color={SLATE} /><Text style={s.loaderText}>Loading…</Text></View>
-          ) : filtered.length === 0 ? (
-            <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
-          ) : filtered.map(item => {
-            const st = statusStyle(item.status);
-            return (
-              <Pressable key={item.id} style={s.tableRow}
-                onPress={() => item.status === 'waiting' && handleDispatch(item.id)}>
-                <Text style={[s.td, { color: MUTED }]}>
-                  {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                </Text>
-                <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
-                <Text style={s.td}>{item.parent_id}</Text>
-                <Text style={s.td}>{item.gate || '—'}</Text>
-                <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
-                <View style={s.td}>
-                  <View style={[s.pill, { backgroundColor: st.bg }]}>
-                    <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
-                  </View>
-                </View>
-              </Pressable>
-            );
-          })}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={{ minWidth: 550, width: '100%' }}>
+              <View style={s.tableHeader}>
+                {['Time', 'Student', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
+                  <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
+                ))}
+              </View>
+              {studentsLoading ? (
+                <View style={s.loader}><ActivityIndicator color={SLATE} /><Text style={s.loaderText}>Loading…</Text></View>
+              ) : filtered.length === 0 ? (
+                <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
+              ) : filtered.map(item => {
+                const st = statusStyle(item.status);
+                return (
+                  <Pressable key={item.id} style={s.tableRow}
+                    onPress={() => item.status === 'waiting' && handleDispatch(item.id)}>
+                    <Text style={[s.td, { color: MUTED }]}>
+                      {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </Text>
+                    <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
+                    <Text style={s.td}>{item.parent_id}</Text>
+                    <Text style={s.td}>{item.gate || '—'}</Text>
+                    <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
+                    <View style={s.td}>
+                      <View style={[s.pill, { backgroundColor: st.bg }]}>
+                        <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
         </View>
 
         {/* Geofence Quick Controls */}
@@ -621,31 +628,35 @@ export default function AdminPortal() {
             onClassChange={setFilterClass} onSectionChange={setFilterSection}
           />
         </View>
-        <View style={s.tableHeader}>
-          {['Name', 'Grade', 'Gate', 'Guardian ID', 'Last Distance', 'Status'].map(h => (
-            <Text key={h} style={[s.th, h === 'Name' ? { flex: 2 } : {}]}>{h}</Text>
-          ))}
-        </View>
-        <ScrollView>
-          {studentsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
-            : filtSt.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
-            : filtSt.map(item => {
-              const st = statusStyle(item.status);
-              return (
-                <View key={item.id} style={s.tableRow}>
-                  <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
-                  <Text style={s.td}>{item.grade || '—'}</Text>
-                  <Text style={s.td}>{item.gate || '—'}</Text>
-                  <Text style={[s.td, { color: MUTED }]}>{item.parent_id}</Text>
-                  <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
-                  <View style={s.td}>
-                    <View style={[s.pill, { backgroundColor: st.bg }]}>
-                      <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={{ minWidth: 600, width: '100%' }}>
+            <View style={s.tableHeader}>
+              {['Name', 'Grade', 'Gate', 'Guardian ID', 'Last Distance', 'Status'].map(h => (
+                <Text key={h} style={[s.th, h === 'Name' ? { flex: 2 } : {}]}>{h}</Text>
+              ))}
+            </View>
+            <ScrollView>
+              {studentsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
+                : filtSt.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
+                : filtSt.map(item => {
+                  const st = statusStyle(item.status);
+                  return (
+                    <View key={item.id} style={s.tableRow}>
+                      <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
+                      <Text style={s.td}>{item.grade || '—'}</Text>
+                      <Text style={s.td}>{item.gate || '—'}</Text>
+                      <Text style={[s.td, { color: MUTED }]}>{item.parent_id}</Text>
+                      <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
+                      <View style={s.td}>
+                        <View style={[s.pill, { backgroundColor: st.bg }]}>
+                          <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+                        </View>
+                      </View>
                     </View>
-                  </View>
-                </View>
-              );
-            })}
+                  );
+                })}
+            </ScrollView>
+          </View>
         </ScrollView>
       </View>
     );
@@ -671,34 +682,38 @@ export default function AdminPortal() {
             onClassChange={setFilterClass} onSectionChange={setFilterSection}
           />
         </View>
-        <View style={s.tableHeader}>
-          {['Guardian ID', 'Children', 'Gates', 'Last Distance', 'Status'].map(h => (
-            <Text key={h} style={[s.th, h === 'Children' ? { flex: 2 } : {}]}>{h}</Text>
-          ))}
-        </View>
-        <ScrollView>
-          {pairs.length === 0
-            ? <View style={s.loader}><Text style={s.loaderText}>No guardians match this filter.</Text></View>
-            : pairs.map(([pid, kids]) => {
-            const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
-            const allD = kids.every(k => k.status === 'dispatched');
-            const anyD = kids.some(k => k.status === 'dispatched');
-            return (
-              <View key={pid} style={s.tableRow}>
-                <Text style={[s.td, s.tdBold]}>{pid}</Text>
-                <View style={[s.td, { flex: 2 }]}>{kids.map(k => <Text key={k.id} style={{ fontSize: 12, color: TEXT }}>• {k.name}</Text>)}</View>
-                <Text style={s.td}>{[...new Set(kids.map(k => k.gate))].join(', ') || '—'}</Text>
-                <Text style={[s.td, { color: SLATE }]}>{dist != null ? `${dist}m` : '—'}</Text>
-                <View style={s.td}>
-                  <View style={[s.pill, { backgroundColor: allD ? '#d1e4ff' : anyD ? '#b7d7ff' : '#e2e2e4' }]}>
-                    <Text style={[s.pillText, { color: allD ? '#001d35' : anyD ? '#28496a' : '#43474d' }]}>
-                      {allD ? 'All Dispatched' : anyD ? 'Partial' : 'Waiting'}
-                    </Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={{ minWidth: 600, width: '100%' }}>
+            <View style={s.tableHeader}>
+              {['Guardian ID', 'Children', 'Gates', 'Last Distance', 'Status'].map(h => (
+                <Text key={h} style={[s.th, h === 'Children' ? { flex: 2 } : {}]}>{h}</Text>
+              ))}
+            </View>
+            <ScrollView>
+              {pairs.length === 0
+                ? <View style={s.loader}><Text style={s.loaderText}>No guardians match this filter.</Text></View>
+                : pairs.map(([pid, kids]) => {
+                const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
+                const allD = kids.every(k => k.status === 'dispatched');
+                const anyD = kids.some(k => k.status === 'dispatched');
+                return (
+                  <View key={pid} style={s.tableRow}>
+                    <Text style={[s.td, s.tdBold]}>{pid}</Text>
+                    <View style={[s.td, { flex: 2 }]}>{kids.map(k => <Text key={k.id} style={{ fontSize: 12, color: TEXT }}>• {k.name}</Text>)}</View>
+                    <Text style={s.td}>{[...new Set(kids.map(k => k.gate))].join(', ') || '—'}</Text>
+                    <Text style={[s.td, { color: SLATE }]}>{dist != null ? `${dist}m` : '—'}</Text>
+                    <View style={s.td}>
+                      <View style={[s.pill, { backgroundColor: allD ? '#d1e4ff' : anyD ? '#b7d7ff' : '#e2e2e4' }]}>
+                        <Text style={[s.pillText, { color: allD ? '#001d35' : anyD ? '#28496a' : '#43474d' }]}>
+                          {allD ? 'All Dispatched' : anyD ? 'Partial' : 'Waiting'}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-                </View>
-              </View>
-            );
-          })}
+                );
+              })}
+            </ScrollView>
+          </View>
         </ScrollView>
       </View>
     );
@@ -718,48 +733,52 @@ export default function AdminPortal() {
           </Pressable>
         </View>
       </View>
-      <View style={s.tableHeader}>
-        {['Parent ID', 'Full Name', 'Password', 'Phone', 'Linked Students', 'Status', 'Actions'].map(h => (
-          <Text key={h} style={[s.th, h === 'Linked Students' ? { flex: 2 } : {}]}>{h}</Text>
-        ))}
-      </View>
-      <ScrollView>
-        {accountsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
-          : accounts.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No parent accounts. Create one above.</Text></View>
-          : accounts.map(acc => {
-            const linked = students.filter(st => st.parent_id === acc.parent_id);
-            return (
-              <View key={acc.id} style={s.tableRow}>
-                <Text style={[s.td, s.tdBold]}>{acc.parent_id}</Text>
-                <Text style={s.td}>{acc.full_name}</Text>
-                <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>{acc.password}</Text>
-                <Text style={[s.td, { color: MUTED }]}>{acc.phone || '—'}</Text>
-                <View style={[s.td, { flex: 2 }]}>
-                  {linked.length === 0
-                    ? <Text style={{ fontSize: 12, color: MUTED }}>None</Text>
-                    : linked.map(st => <Text key={st.id} style={{ fontSize: 12, color: TEXT }}>• {st.name}</Text>)
-                  }
-                </View>
-                <View style={s.td}>
-                  <Pressable onPress={() => handleToggleActive(acc)}>
-                    <View style={[s.pill, { backgroundColor: acc.is_active ? '#D1FAE5' : '#fee2e2' }]}>
-                      <Text style={[s.pillText, { color: acc.is_active ? '#065F46' : '#c0392b' }]}>
-                        {acc.is_active ? 'Active' : 'Inactive'}
-                      </Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ minWidth: 700, width: '100%' }}>
+          <View style={s.tableHeader}>
+            {['Parent ID', 'Full Name', 'Password', 'Phone', 'Linked Students', 'Status', 'Actions'].map(h => (
+              <Text key={h} style={[s.th, h === 'Linked Students' ? { flex: 2 } : {}]}>{h}</Text>
+            ))}
+          </View>
+          <ScrollView>
+            {accountsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
+              : accounts.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No parent accounts. Create one above.</Text></View>
+              : accounts.map(acc => {
+                const linked = students.filter(st => st.parent_id === acc.parent_id);
+                return (
+                  <View key={acc.id} style={s.tableRow}>
+                    <Text style={[s.td, s.tdBold]}>{acc.parent_id}</Text>
+                    <Text style={s.td}>{acc.full_name}</Text>
+                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>{acc.password}</Text>
+                    <Text style={[s.td, { color: MUTED }]}>{acc.phone || '—'}</Text>
+                    <View style={[s.td, { flex: 2 }]}>
+                      {linked.length === 0
+                        ? <Text style={{ fontSize: 12, color: MUTED }}>None</Text>
+                        : linked.map(st => <Text key={st.id} style={{ fontSize: 12, color: TEXT }}>• {st.name}</Text>)
+                      }
                     </View>
-                  </Pressable>
-                </View>
-                <View style={[s.td, { flexDirection: 'row', gap: 6 }]}>
-                  <Pressable style={[s.smBtn, { backgroundColor: '#e8f0f8' }]} onPress={() => openEditAccount(acc)}>
-                    <Text style={[s.smBtnText, { color: SLATE }]}>Edit</Text>
-                  </Pressable>
-                  <Pressable style={[s.smBtn, { backgroundColor: '#fee2e2' }]} onPress={() => handleDeleteAccount(acc)}>
-                    <Text style={[s.smBtnText, { color: '#c0392b' }]}>Del</Text>
-                  </Pressable>
-                </View>
-              </View>
-            );
-          })}
+                    <View style={s.td}>
+                      <Pressable onPress={() => handleToggleActive(acc)}>
+                        <View style={[s.pill, { backgroundColor: acc.is_active ? '#D1FAE5' : '#fee2e2' }]}>
+                          <Text style={[s.pillText, { color: acc.is_active ? '#065F46' : '#c0392b' }]}>
+                            {acc.is_active ? 'Active' : 'Inactive'}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    </View>
+                    <View style={[s.td, { flexDirection: 'row', gap: 6 }]}>
+                      <Pressable style={[s.smBtn, { backgroundColor: '#e8f0f8' }]} onPress={() => openEditAccount(acc)}>
+                        <Text style={[s.smBtnText, { color: SLATE }]}>Edit</Text>
+                      </Pressable>
+                      <Pressable style={[s.smBtn, { backgroundColor: '#fee2e2' }]} onPress={() => handleDeleteAccount(acc)}>
+                        <Text style={[s.smBtnText, { color: '#c0392b' }]}>Del</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+          </ScrollView>
+        </View>
       </ScrollView>
     </View>
   );
@@ -846,34 +865,38 @@ export default function AdminPortal() {
             onClassChange={setFilterClass} onSectionChange={setFilterSection}
           />
         </View>
-        <View style={s.tableHeader}>
-          {['Time', 'Student', 'Grade', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
-            <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
-          ))}
-        </View>
-        <ScrollView>
-          {sorted.length === 0
-            ? <View style={s.loader}><Text style={s.loaderText}>No dispatch records match this filter.</Text></View>
-            : sorted.map(item => {
-            const st = statusStyle(item.status);
-            return (
-              <View key={item.id} style={s.tableRow}>
-                <Text style={[s.td, { color: MUTED }]}>
-                  {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                </Text>
-                <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
-                <Text style={[s.td, { color: MUTED, fontSize: 11 }]}>{item.grade || '—'}</Text>
-                <Text style={s.td}>{item.parent_id}</Text>
-                <Text style={s.td}>{item.gate || '—'}</Text>
-                <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
-                <View style={s.td}>
-                  <View style={[s.pill, { backgroundColor: st.bg }]}>
-                    <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={{ minWidth: 650, width: '100%' }}>
+            <View style={s.tableHeader}>
+              {['Time', 'Student', 'Grade', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
+                <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
+              ))}
+            </View>
+            <ScrollView>
+              {sorted.length === 0
+                ? <View style={s.loader}><Text style={s.loaderText}>No dispatch records match this filter.</Text></View>
+                : sorted.map(item => {
+                const st = statusStyle(item.status);
+                return (
+                  <View key={item.id} style={s.tableRow}>
+                    <Text style={[s.td, { color: MUTED }]}>
+                      {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </Text>
+                    <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
+                    <Text style={[s.td, { color: MUTED, fontSize: 11 }]}>{item.grade || '—'}</Text>
+                    <Text style={s.td}>{item.parent_id}</Text>
+                    <Text style={s.td}>{item.gate || '—'}</Text>
+                    <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
+                    <View style={s.td}>
+                      <View style={[s.pill, { backgroundColor: st.bg }]}>
+                        <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+                      </View>
+                    </View>
                   </View>
-                </View>
-              </View>
-            );
-          })}
+                );
+              })}
+            </ScrollView>
+          </View>
         </ScrollView>
       </View>
     );
@@ -1184,8 +1207,8 @@ export default function AdminPortal() {
 
   return (
     <View style={s.shell}>
-      {/* Sidebar */}
-      {Platform.OS === 'web' && (
+      {/* Sidebar - hidden on mobile screens */}
+      {!isMobile && (
         <View style={s.sidebar}>
           <View style={s.sidebarLogo}>
             <View style={s.logoCircle}><Text style={{ fontSize: 18 }}>🛡️</Text></View>
@@ -1229,34 +1252,34 @@ export default function AdminPortal() {
       {/* Main */}
       <View style={s.main}>
         {/* Top Header */}
-        <View style={s.topHeader}>
-          <View style={s.searchBarWrap}>
+        <View style={[s.topHeader, isMobile && { paddingHorizontal: 12, gap: 8 }]}>
+          <View style={[s.searchBarWrap, isMobile && { flex: 1, maxWidth: 180 }]}>
             <Text>🔍 </Text>
             {Platform.OS === 'web' ? (
               // @ts-ignore
-              <input style={{ ...s.searchWeb, border: 'none', background: 'transparent', outline: 'none' } as any} placeholder="Search students or guardians…"
+              <input style={{ ...s.searchWeb, border: 'none', background: 'transparent', outline: 'none' } as any} placeholder={isMobile ? "Search…" : "Search students or guardians…"}
                 value={searchQuery} onChange={(e: any) => setSearchQuery(e.target.value)} />
             ) : (
               <TextInput style={s.searchNative} placeholder="Search…" value={searchQuery}
                 onChangeText={setSearchQuery} placeholderTextColor={MUTED} />
             )}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <View style={s.gpsBadge}><View style={s.gpsDot} /><Text style={s.gpsBadgeText}>GPS Active</Text></View>
-            <View style={s.avBubble}><Text style={{ fontSize: 12, fontWeight: '700', color: SLATE }}>SA</Text></View>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: SLATE }}>
-              {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: isMobile ? 6 : 12 }}>
+            <View style={[s.gpsBadge, isMobile && { paddingHorizontal: 6, paddingVertical: 4 }]}><View style={s.gpsDot} /><Text style={[s.gpsBadgeText, isMobile && { fontSize: 10 }]}>{isMobile ? 'GPS' : 'GPS Active'}</Text></View>
+            <View style={[s.avBubble, isMobile && { width: 28, height: 28, borderRadius: 14 }]}><Text style={{ fontSize: isMobile ? 10 : 12, fontWeight: '700', color: SLATE }}>SA</Text></View>
+            <Text style={{ fontSize: isMobile ? 14 : 18, fontWeight: '700', color: SLATE }}>
+              {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', ...(isMobile ? {} : { second: '2-digit' }) })}
             </Text>
           </View>
         </View>
 
-        <ScrollView style={s.canvas} contentContainerStyle={{ paddingBottom: Platform.OS === 'web' ? 48 : 110 }}>
+        <ScrollView style={s.canvas} contentContainerStyle={{ padding: isMobile ? 12 : 24, paddingBottom: isMobile ? 110 : 48 }}>
           {renderContent()}
         </ScrollView>
       </View>
 
-      {/* ── Mobile Bottom Navigation (hidden on web where sidebar shows) ── */}
-      {Platform.OS !== 'web' && (
+      {/* ── Mobile Bottom Navigation (shown whenever screen is mobile width) ── */}
+      {isMobile && (
         <View style={s.mobileBottomNav}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4, paddingHorizontal: 8 }}>
             {([
@@ -1450,8 +1473,8 @@ const s = StyleSheet.create({
   canvas: { flex: 1, padding: 24 },
 
   // KPI
-  kpiRow: { flexDirection: 'row', gap: 14, marginBottom: 18, flexWrap: 'wrap' },
-  kpiCard: { flex: 1, minWidth: 170, backgroundColor: WHITE, borderRadius: 12, padding: 18, borderWidth: 1, borderColor: BORDER, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2, gap: 3 },
+  kpiRow: { flexDirection: 'row', gap: 10, marginBottom: 18, flexWrap: 'wrap' },
+  kpiCard: { flex: 1, minWidth: 140, backgroundColor: WHITE, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: BORDER, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2, gap: 3 },
   kpiTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 },
   kpiLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, color: MUTED, textTransform: 'uppercase', flex: 1, flexWrap: 'wrap' },
   kpiIcon: { fontSize: 18 },
@@ -1461,8 +1484,8 @@ const s = StyleSheet.create({
   splitRow: { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
 
   // Panels
-  panel: { flex: 2, minWidth: 320, backgroundColor: WHITE, borderRadius: 12, borderWidth: 1, borderColor: BORDER, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
-  geoPanel: { flex: 1, minWidth: 240, backgroundColor: WHITE, borderRadius: 12, borderWidth: 1, borderColor: BORDER, padding: 22, gap: 12, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  panel: { flex: 2, minWidth: 280, width: '100%', backgroundColor: WHITE, borderRadius: 12, borderWidth: 1, borderColor: BORDER, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  geoPanel: { flex: 1, minWidth: 280, width: '100%', backgroundColor: WHITE, borderRadius: 12, borderWidth: 1, borderColor: BORDER, padding: 22, gap: 12, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   panelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: BORDER, backgroundColor: SURFACE },
   panelHeaderRight: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   panelTitle: { fontSize: 17, fontWeight: '700', color: TEXT },
