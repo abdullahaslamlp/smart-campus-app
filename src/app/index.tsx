@@ -56,8 +56,20 @@ export default function LandingPage() {
           <Text style={[styles.chevron, { color: SLATE }]}>›</Text>
         </Pressable>
 
+        <Pressable
+          style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#10B981', backgroundColor: '#f0fdf4' }, pressed && styles.btnPressed]}
+          onPress={() => router.push('/driver-login' as any)}
+        >
+          <Text style={styles.secondaryBtnIcon}>🛺</Text>
+          <View>
+            <Text style={[styles.secondaryBtnTitle, { color: '#065F46' }]}>Transporter / Driver</Text>
+            <Text style={styles.secondaryBtnSub}>Rickshaw, Van & Carpool pickup</Text>
+          </View>
+          <Text style={[styles.chevron, { color: '#065F46' }]}>›</Text>
+        </Pressable>
+
         <Text style={styles.footer}>
-          Parent accounts are issued by your school administrator.
+          Parent & Transporter accounts are issued by your school administrator.
         </Text>
       </View>
     </View>

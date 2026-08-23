@@ -8,7 +8,7 @@ import {
 import { supabase } from '../../supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type NavSection = 'dashboard' | 'students' | 'guardians' | 'geofence' | 'logs' | 'accounts' | 'tests';
+type NavSection = 'dashboard' | 'students' | 'guardians' | 'geofence' | 'logs' | 'accounts' | 'transporters' | 'tests';
 
 interface TestResult {
   id: string; category: string; name: string;
@@ -25,6 +25,13 @@ interface Student {
 interface ParentAccount {
   id: string; parent_id: string; full_name: string;
   password: string; phone?: string; is_active: boolean; created_at: string;
+}
+
+interface TransporterAccount {
+  id: string; driver_id: string; driver_name: string;
+  vehicle_type: string; vehicle_number: string;
+  password: string; phone?: string; linked_parent_ids: string[];
+  is_active: boolean; created_at: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -173,6 +180,21 @@ export default function AdminPortal() {
   const [na_loading, setNa_loading] = useState(false);
   const [accountModalError, setAccountModalError] = useState('');
 
+  // ── Transporter modals ──
+  const [transporters, setTransporters] = useState<TransporterAccount[]>([]);
+  const [transportersLoading, setTransportersLoading] = useState(true);
+  const [addTransporterOpen, setAddTransporterOpen] = useState(false);
+  const [editTransporter, setEditTransporter] = useState<TransporterAccount | null>(null);
+  const [nt_driverId, setNt_driverId] = useState('');
+  const [nt_driverName, setNt_driverName] = useState('');
+  const [nt_vehicleType, setNt_vehicleType] = useState('Rickshaw');
+  const [nt_vehicleNumber, setNt_vehicleNumber] = useState('');
+  const [nt_password, setNt_password] = useState('safepass123');
+  const [nt_phone, setNt_phone] = useState('');
+  const [nt_linkedParents, setNt_linkedParents] = useState<string[]>([]);
+  const [nt_loading, setNt_loading] = useState(false);
+  const [transporterModalError, setTransporterModalError] = useState('');
+
   // ─── PIN Login ─────────────────────────────────────────────────────────────
   const handlePinLogin = () => {
     if (pinInput.trim() === ADMIN_PIN) {
@@ -190,6 +212,7 @@ export default function AdminPortal() {
 
     fetchStudents();
     fetchAccounts();
+    fetchTransporters();
     fetchSettings();
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -200,6 +223,10 @@ export default function AdminPortal() {
 
     const accountSub = supabase.channel('admin_accounts_' + Date.now())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'parent_accounts' }, fetchAccounts)
+      .subscribe();
+
+    const transporterSub = supabase.channel('admin_transporters_' + Date.now())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transporter_accounts' }, fetchTransporters)
       .subscribe();
 
     const settingsSub = supabase.channel('admin_settings_' + Date.now())
@@ -222,6 +249,7 @@ export default function AdminPortal() {
       clearInterval(timer);
       supabase.removeChannel(studentSub);
       supabase.removeChannel(accountSub);
+      supabase.removeChannel(transporterSub);
       supabase.removeChannel(settingsSub);
       if (Platform.OS === 'web') window.removeEventListener('message', handleMapMessage);
     };
@@ -231,6 +259,7 @@ export default function AdminPortal() {
   useEffect(() => {
     if (!pinAuthed) return;
     if (activeNav === 'accounts') fetchAccounts();
+    if (activeNav === 'transporters') fetchTransporters();
     if (activeNav === 'students' || activeNav === 'guardians' || activeNav === 'dashboard' || activeNav === 'logs') fetchStudents();
   }, [activeNav, pinAuthed]);
 
@@ -250,6 +279,96 @@ export default function AdminPortal() {
       setAccounts((data as ParentAccount[]) || []);
     } catch (e: any) { console.error('[fetchAccounts]', e.message); }
     finally { setAccountsLoading(false); }
+  };
+
+  const fetchTransporters = async () => {
+    try {
+      const { data, error } = await supabase.from('transporter_accounts').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      setTransporters((data as TransporterAccount[]) || []);
+    } catch (e: any) { console.error('[fetchTransporters]', e.message); }
+    finally { setTransportersLoading(false); }
+  };
+
+  const openAddTransporter = () => {
+    setEditTransporter(null);
+    setNt_driverId('');
+    setNt_driverName('');
+    setNt_vehicleType('Rickshaw');
+    setNt_vehicleNumber('');
+    setNt_password('safepass123');
+    setNt_phone('');
+    setNt_linkedParents([]);
+    setTransporterModalError('');
+    setAddTransporterOpen(true);
+  };
+
+  const openEditTransporter = (tr: TransporterAccount) => {
+    setEditTransporter(tr);
+    setNt_driverId(tr.driver_id);
+    setNt_driverName(tr.driver_name);
+    setNt_vehicleType(tr.vehicle_type);
+    setNt_vehicleNumber(tr.vehicle_number);
+    setNt_password(tr.password);
+    setNt_phone(tr.phone || '');
+    setNt_linkedParents(tr.linked_parent_ids || []);
+    setTransporterModalError('');
+    setAddTransporterOpen(true);
+  };
+
+  const handleSaveTransporter = async () => {
+    if (!nt_driverId.trim() || !nt_driverName.trim() || !nt_vehicleNumber.trim()) {
+      setTransporterModalError('Driver ID, Driver Name, and Vehicle Number are required.');
+      return;
+    }
+    setNt_loading(true);
+    setTransporterModalError('');
+    try {
+      if (editTransporter) {
+        const { error } = await supabase.from('transporter_accounts').update({
+          driver_name: nt_driverName.trim(),
+          vehicle_type: nt_vehicleType.trim(),
+          vehicle_number: nt_vehicleNumber.trim(),
+          password: nt_password.trim() || 'safepass123',
+          phone: nt_phone.trim() || null,
+          linked_parent_ids: nt_linkedParents,
+        }).eq('id', editTransporter.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('transporter_accounts').insert({
+          driver_id: nt_driverId.trim().toLowerCase(),
+          driver_name: nt_driverName.trim(),
+          vehicle_type: nt_vehicleType.trim(),
+          vehicle_number: nt_vehicleNumber.trim(),
+          password: nt_password.trim() || 'safepass123',
+          phone: nt_phone.trim() || null,
+          linked_parent_ids: nt_linkedParents,
+          is_active: true,
+        });
+        if (error) throw error;
+      }
+      setAddTransporterOpen(false);
+      fetchTransporters();
+    } catch (e: any) {
+      setTransporterModalError(e.message);
+    } finally { setNt_loading(false); }
+  };
+
+  const handleToggleTransporterActive = async (tr: TransporterAccount) => {
+    try {
+      await supabase.from('transporter_accounts').update({ is_active: !tr.is_active }).eq('id', tr.id);
+      fetchTransporters();
+    } catch (e: any) { console.error('[toggleTransporterActive]', e.message); }
+  };
+
+  const handleDeleteTransporter = async (tr: TransporterAccount) => {
+    const confirmDelete = Platform.OS === 'web' ? confirm(`Delete driver "${tr.driver_name}" (${tr.driver_id})?`) : true;
+    if (confirmDelete) {
+      try {
+        await supabase.from('transporter_accounts').delete().eq('id', tr.id);
+        fetchTransporters();
+      } catch (e: any) { console.error('[deleteTransporter]', e.message); }
+    }
   };
 
   const fetchSettings = async () => {
@@ -783,6 +902,72 @@ export default function AdminPortal() {
     </View>
   );
 
+  const renderTransporters = () => (
+    <View style={s.panel}>
+      <View style={s.panelHeader}>
+        <Text style={s.panelTitle}>🛺 Rickshaw & Van Transporters</Text>
+        <View style={s.panelHeaderRight}>
+          <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{transporters.length} drivers</Text>
+          <Pressable style={s.smBtn} onPress={fetchTransporters} disabled={transportersLoading}>
+            {transportersLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Refresh</Text>}
+          </Pressable>
+          <Pressable style={[s.smBtn, { backgroundColor: '#065F46' }]} onPress={openAddTransporter}>
+            <Text style={[s.smBtnText, { color: WHITE }]}>+ New Driver</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ minWidth: 750, width: '100%' }}>
+          <View style={s.tableHeader}>
+            {['Driver ID', 'Driver Name', 'Vehicle', 'Vehicle No.', 'Password', 'Linked Parents', 'Status', 'Actions'].map(h => (
+              <Text key={h} style={[s.th, h === 'Linked Parents' ? { flex: 2 } : {}]}>{h}</Text>
+            ))}
+          </View>
+          <ScrollView>
+            {transportersLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
+              : transporters.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No registered transporters. Add a driver above.</Text></View>
+              : transporters.map(tr => {
+                const linkedCount = (tr.linked_parent_ids || []).length;
+                return (
+                  <View key={tr.id} style={s.tableRow}>
+                    <Text style={[s.td, s.tdBold, { color: '#065F46' }]}>{tr.driver_id}</Text>
+                    <Text style={s.td}>{tr.driver_name}</Text>
+                    <Text style={s.td}>{tr.vehicle_type}</Text>
+                    <Text style={[s.td, s.tdBold]}>{tr.vehicle_number}</Text>
+                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>{tr.password}</Text>
+                    <View style={[s.td, { flex: 2 }]}>
+                      {linkedCount === 0
+                        ? <Text style={{ fontSize: 12, color: MUTED }}>None linked</Text>
+                        : <Text style={{ fontSize: 12, color: TEXT }}>{(tr.linked_parent_ids || []).join(', ')} ({linkedCount} parents)</Text>
+                      }
+                    </View>
+                    <View style={s.td}>
+                      <Pressable onPress={() => handleToggleTransporterActive(tr)}>
+                        <View style={[s.pill, { backgroundColor: tr.is_active ? '#D1FAE5' : '#fee2e2' }]}>
+                          <Text style={[s.pillText, { color: tr.is_active ? '#065F46' : '#c0392b' }]}>
+                            {tr.is_active ? 'Active' : 'Inactive'}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    </View>
+                    <View style={[s.td, { flexDirection: 'row', gap: 6 }]}>
+                      <Pressable style={[s.smBtn, { backgroundColor: '#e8f0f8' }]} onPress={() => openEditTransporter(tr)}>
+                        <Text style={[s.smBtnText, { color: SLATE }]}>Edit</Text>
+                      </Pressable>
+                      <Pressable style={[s.smBtn, { backgroundColor: '#fee2e2' }]} onPress={() => handleDeleteTransporter(tr)}>
+                        <Text style={[s.smBtnText, { color: '#c0392b' }]}>Del</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+          </ScrollView>
+        </View>
+      </ScrollView>
+    </View>
+  );
+
   const renderGeofenceConfig = () => (
     <View style={s.panel}>
       <View style={s.panelHeader}>
@@ -1200,6 +1385,7 @@ export default function AdminPortal() {
       case 'geofence': return renderGeofenceConfig();
       case 'logs': return renderDispatchLogs();
       case 'accounts': return renderParentAccounts();
+      case 'transporters': return renderTransporters();
       case 'tests': return renderTestLogs();
       default: return renderDashboard();
     }
@@ -1226,6 +1412,7 @@ export default function AdminPortal() {
               { id: 'geofence', label: 'Geofence Config', icon: '🗺️' },
               { id: 'logs', label: 'Dispatch Logs', icon: '📋' },
               { id: 'accounts', label: 'Parent Accounts', icon: '🔑' },
+              { id: 'transporters', label: 'Transporters', icon: '🛺' },
               { id: 'tests', label: 'System Tests', icon: '🧪' },
             ] as { id: NavSection; label: string; icon: string }[]).map(item => (
               <Pressable key={item.id}
@@ -1289,6 +1476,7 @@ export default function AdminPortal() {
               { id: 'geofence',   label: 'Geofence',   icon: '🗺️' },
               { id: 'logs',       label: 'Logs',       icon: '📋' },
               { id: 'accounts',   label: 'Accounts',   icon: '🔑' },
+              { id: 'transporters',label: 'Drivers',   icon: '🛺' },
               { id: 'tests',      label: 'Tests',      icon: '🧪' },
             ] as { id: NavSection; label: string; icon: string }[]).map(item => (
               <Pressable key={item.id}
@@ -1414,6 +1602,85 @@ export default function AdminPortal() {
               <Pressable style={s.cancelBtn} onPress={() => setAddAccountOpen(false)}><Text style={s.cancelBtnText}>Cancel</Text></Pressable>
               <Pressable style={[s.confirmBtn, na_loading && { opacity: 0.7 }]} onPress={handleSaveAccount} disabled={na_loading}>
                 {na_loading ? <ActivityIndicator size="small" color={WHITE} /> : <Text style={s.confirmBtnText}>{editAccount ? 'Save Changes' : 'Create Account'}</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Add / Edit Transporter Modal */}
+      {addTransporterOpen && (
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>{editTransporter ? '✏️ Edit Transporter Driver' : '🛺 New Transporter Driver'}</Text>
+            <Text style={s.modalSub}>
+              {editTransporter ? 'Update driver profile & parent assignments.' : 'Register a Rickshaw/Van driver & assign parent accounts.'}
+            </Text>
+            <View style={{ gap: 12, marginTop: 8 }}>
+              {transporterModalError ? (
+                <View style={s.errorBanner}>
+                  <Text style={s.errorText}>⚠️  {transporterModalError}</Text>
+                </View>
+              ) : null}
+              <View style={{ gap: 4 }}>
+                <Text style={s.formLabel}>Driver ID *</Text>
+                {Platform.OS === 'web' ? (
+                  // @ts-ignore
+                  <input style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any}
+                    placeholder="e.g. driver_001"
+                    value={nt_driverId}
+                    onChange={(e: any) => setNt_driverId(e.target.value)}
+                    disabled={!!editTransporter} />
+                ) : (
+                  <TextInput style={[s.formInput, !!editTransporter && { backgroundColor: '#e8e8ea' }]}
+                    placeholder="e.g. driver_001" value={nt_driverId}
+                    onChangeText={setNt_driverId} editable={!editTransporter} placeholderTextColor={MUTED} />
+                )}
+                {editTransporter && <Text style={{ fontSize: 11, color: MUTED }}>Driver ID cannot be changed.</Text>}
+              </View>
+              <FormField label="Driver Full Name *" value={nt_driverName} setter={setNt_driverName} placeholder="e.g. Afzal Khan" />
+              <View style={{ gap: 4 }}>
+                <Text style={s.formLabel}>Vehicle Type *</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {['Rickshaw', 'School Van', 'Taxi/Carpool'].map(vt => (
+                    <Pressable key={vt} onPress={() => setNt_vehicleType(vt)}
+                      style={[s.filterChip, nt_vehicleType === vt && s.filterChipActive]}>
+                      <Text style={[s.filterChipTxt, nt_vehicleType === vt && s.filterChipTxtActive]}>{vt}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+              <FormField label="Vehicle Number *" value={nt_vehicleNumber} setter={setNt_vehicleNumber} placeholder="e.g. LEA-4920" />
+              <FormField label="Password *" value={nt_password} setter={setNt_password} placeholder="e.g. safepass123" />
+              <FormField label="Phone (optional)" value={nt_phone} setter={setNt_phone} placeholder="e.g. 0301-5550001" />
+
+              {/* Linked Parents Selection */}
+              <View style={{ gap: 6, marginTop: 4 }}>
+                <Text style={s.formLabel}>Linked Parent Accounts ({nt_linkedParents.length} selected)</Text>
+                <Text style={{ fontSize: 11, color: MUTED }}>Tap to assign which parents' children this driver picks up:</Text>
+                <ScrollView style={{ maxHeight: 120, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: 8, backgroundColor: '#fafafa' }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {accounts.map(acc => {
+                      const isSel = nt_linkedParents.includes(acc.parent_id);
+                      return (
+                        <Pressable key={acc.parent_id}
+                          onPress={() => {
+                            if (isSel) setNt_linkedParents(p => p.filter(x => x !== acc.parent_id));
+                            else setNt_linkedParents(p => [...p, acc.parent_id]);
+                          }}
+                          style={[s.filterChip, isSel && { backgroundColor: '#065F46', borderColor: '#065F46' }]}>
+                          <Text style={[s.filterChipTxt, isSel && { color: WHITE }]}>{acc.parent_id} ({acc.full_name.split(' ')[0]})</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+              <Pressable style={s.cancelBtn} onPress={() => setAddTransporterOpen(false)}><Text style={s.cancelBtnText}>Cancel</Text></Pressable>
+              <Pressable style={[s.confirmBtn, { backgroundColor: '#065F46' }, nt_loading && { opacity: 0.7 }]} onPress={handleSaveTransporter} disabled={nt_loading}>
+                {nt_loading ? <ActivityIndicator size="small" color={WHITE} /> : <Text style={s.confirmBtnText}>{editTransporter ? 'Save Changes' : 'Create Driver'}</Text>}
               </Pressable>
             </View>
           </View>
