@@ -195,6 +195,12 @@ export default function AdminPortal() {
   const [nt_loading, setNt_loading] = useState(false);
   const [transporterModalError, setTransporterModalError] = useState('');
 
+  // ── Password Visibility Toggles ──
+  const [showParentPasswords, setShowParentPasswords] = useState(false);
+  const [showTransporterPasswords, setShowTransporterPasswords] = useState(false);
+  const [showParentModalPw, setShowParentModalPw] = useState(false);
+  const [showTransporterModalPw, setShowTransporterModalPw] = useState(false);
+
   // ─── PIN Login ─────────────────────────────────────────────────────────────
   const handlePinLogin = () => {
     if (pinInput.trim() === ADMIN_PIN) {
@@ -856,7 +862,13 @@ export default function AdminPortal() {
         <View style={{ minWidth: 700, width: '100%' }}>
           <View style={s.tableHeader}>
             {['Parent ID', 'Full Name', 'Password', 'Phone', 'Linked Students', 'Status', 'Actions'].map(h => (
-              <Text key={h} style={[s.th, h === 'Linked Students' ? { flex: 2 } : {}]}>{h}</Text>
+              h === 'Password' ? (
+                <Pressable key={h} style={[s.th, { flexDirection: 'row', alignItems: 'center', gap: 4 }]} onPress={() => setShowParentPasswords(p => !p)}>
+                  <Text style={s.th}>Password {showParentPasswords ? '🙈' : '👁️'}</Text>
+                </Pressable>
+              ) : (
+                <Text key={h} style={[s.th, h === 'Linked Students' ? { flex: 2 } : {}]}>{h}</Text>
+              )
             ))}
           </View>
           <ScrollView>
@@ -868,7 +880,9 @@ export default function AdminPortal() {
                   <View key={acc.id} style={s.tableRow}>
                     <Text style={[s.td, s.tdBold]}>{acc.parent_id}</Text>
                     <Text style={s.td}>{acc.full_name}</Text>
-                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>{acc.password}</Text>
+                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>
+                      {showParentPasswords ? acc.password : '••••••••'}
+                    </Text>
                     <Text style={[s.td, { color: MUTED }]}>{acc.phone || '—'}</Text>
                     <View style={[s.td, { flex: 2 }]}>
                       {linked.length === 0
@@ -921,7 +935,13 @@ export default function AdminPortal() {
         <View style={{ minWidth: 750, width: '100%' }}>
           <View style={s.tableHeader}>
             {['Driver ID', 'Driver Name', 'Vehicle', 'Vehicle No.', 'Password', 'Linked Parents', 'Status', 'Actions'].map(h => (
-              <Text key={h} style={[s.th, h === 'Linked Parents' ? { flex: 2 } : {}]}>{h}</Text>
+              h === 'Password' ? (
+                <Pressable key={h} style={[s.th, { flexDirection: 'row', alignItems: 'center', gap: 4 }]} onPress={() => setShowTransporterPasswords(p => !p)}>
+                  <Text style={s.th}>Password {showTransporterPasswords ? '🙈' : '👁️'}</Text>
+                </Pressable>
+              ) : (
+                <Text key={h} style={[s.th, h === 'Linked Parents' ? { flex: 2 } : {}]}>{h}</Text>
+              )
             ))}
           </View>
           <ScrollView>
@@ -935,7 +955,9 @@ export default function AdminPortal() {
                     <Text style={s.td}>{tr.driver_name}</Text>
                     <Text style={s.td}>{tr.vehicle_type}</Text>
                     <Text style={[s.td, s.tdBold]}>{tr.vehicle_number}</Text>
-                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>{tr.password}</Text>
+                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>
+                      {showTransporterPasswords ? tr.password : '••••••••'}
+                    </Text>
                     <View style={[s.td, { flex: 2 }]}>
                       {linkedCount === 0
                         ? <Text style={{ fontSize: 12, color: MUTED }}>None linked</Text>
@@ -1595,7 +1617,26 @@ export default function AdminPortal() {
                 {editAccount && <Text style={{ fontSize: 11, color: MUTED }}>Parent ID cannot be changed.</Text>}
               </View>
               <FormField label="Full Name *" value={na_fullName} setter={setNa_fullName} placeholder="e.g. Sarah Ahmed" />
-              <FormField label="Password *" value={na_password} setter={setNa_password} placeholder="e.g. safepass123" />
+              <View style={{ gap: 4 }}>
+                <Text style={s.formLabel}>Password *</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {Platform.OS === 'web' ? (
+                    // @ts-ignore
+                    <input style={{ ...s.formInputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
+                      type={showParentModalPw ? 'text' : 'password'}
+                      placeholder="e.g. safepass123"
+                      value={na_password}
+                      onChange={(e: any) => setNa_password(e.target.value)} />
+                  ) : (
+                    <TextInput style={[s.formInput, { flex: 1 }]}
+                      placeholder="e.g. safepass123" value={na_password}
+                      onChangeText={setNa_password} secureTextEntry={!showParentModalPw} placeholderTextColor={MUTED} />
+                  )}
+                  <Pressable style={s.eyeBtn} onPress={() => setShowParentModalPw(p => !p)}>
+                    <Text style={{ fontSize: 18 }}>{showParentModalPw ? '🙈' : '👁️'}</Text>
+                  </Pressable>
+                </View>
+              </View>
               <FormField label="Phone (optional)" value={na_phone} setter={setNa_phone} placeholder="e.g. 0300-1234567" />
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
@@ -1651,29 +1692,62 @@ export default function AdminPortal() {
                 </View>
               </View>
               <FormField label="Vehicle Number *" value={nt_vehicleNumber} setter={setNt_vehicleNumber} placeholder="e.g. LEA-4920" />
-              <FormField label="Password *" value={nt_password} setter={setNt_password} placeholder="e.g. safepass123" />
+              <View style={{ gap: 4 }}>
+                <Text style={s.formLabel}>Password *</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {Platform.OS === 'web' ? (
+                    // @ts-ignore
+                    <input style={{ ...s.formInputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
+                      type={showTransporterModalPw ? 'text' : 'password'}
+                      placeholder="e.g. safepass123"
+                      value={nt_password}
+                      onChange={(e: any) => setNt_password(e.target.value)} />
+                  ) : (
+                    <TextInput style={[s.formInput, { flex: 1 }]}
+                      placeholder="e.g. safepass123" value={nt_password}
+                      onChangeText={setNt_password} secureTextEntry={!showTransporterModalPw} placeholderTextColor={MUTED} />
+                  )}
+                  <Pressable style={s.eyeBtn} onPress={() => setShowTransporterModalPw(p => !p)}>
+                    <Text style={{ fontSize: 18 }}>{showTransporterModalPw ? '🙈' : '👁️'}</Text>
+                  </Pressable>
+                </View>
+              </View>
               <FormField label="Phone (optional)" value={nt_phone} setter={setNt_phone} placeholder="e.g. 0301-5550001" />
 
-              {/* Linked Parents Selection */}
+              {/* Linked Parents Selection (hides parents already assigned to other drivers) */}
               <View style={{ gap: 6, marginTop: 4 }}>
                 <Text style={s.formLabel}>Linked Parent Accounts ({nt_linkedParents.length} selected)</Text>
-                <Text style={{ fontSize: 11, color: MUTED }}>Tap to assign which parents' children this driver picks up:</Text>
+                <Text style={{ fontSize: 11, color: MUTED }}>Unassigned parents available for pickup route:</Text>
                 <ScrollView style={{ maxHeight: 120, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: 8, backgroundColor: '#fafafa' }}>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {accounts.map(acc => {
-                      const isSel = nt_linkedParents.includes(acc.parent_id);
-                      return (
-                        <Pressable key={acc.parent_id}
-                          onPress={() => {
-                            if (isSel) setNt_linkedParents(p => p.filter(x => x !== acc.parent_id));
-                            else setNt_linkedParents(p => [...p, acc.parent_id]);
-                          }}
-                          style={[s.filterChip, isSel && { backgroundColor: '#065F46', borderColor: '#065F46' }]}>
-                          <Text style={[s.filterChipTxt, isSel && { color: WHITE }]}>{acc.parent_id} ({acc.full_name.split(' ')[0]})</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
+                  {(() => {
+                    const assignedToOthers = new Set<string>();
+                    transporters.forEach(tr => {
+                      if (!editTransporter || tr.id !== editTransporter.id) {
+                        (tr.linked_parent_ids || []).forEach(pid => assignedToOthers.add(pid));
+                      }
+                    });
+                    const available = accounts.filter(acc => !assignedToOthers.has(acc.parent_id));
+
+                    return available.length === 0 ? (
+                      <Text style={{ fontSize: 12, color: MUTED, padding: 4 }}>No unassigned parent accounts available.</Text>
+                    ) : (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {available.map(acc => {
+                          const isSel = nt_linkedParents.includes(acc.parent_id);
+                          return (
+                            <Pressable key={acc.parent_id}
+                              onPress={() => {
+                                if (isSel) setNt_linkedParents(p => p.filter(x => x !== acc.parent_id));
+                                else setNt_linkedParents(p => [...p, acc.parent_id]);
+                              }}
+                              style={[s.filterChip, isSel && { backgroundColor: '#065F46', borderColor: '#065F46' }]}>
+                              <Text style={[s.filterChipTxt, isSel && { color: WHITE }]}>{acc.parent_id} ({acc.full_name.split(' ')[0]})</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    );
+                  })()}
                 </ScrollView>
               </View>
             </View>
