@@ -66,10 +66,19 @@ export default function DriverApp() {
     }
     setAuthed(true);
     setDriverInfo(s);
+
+    // Restore driver's own distance from session storage if present
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = window.sessionStorage?.getItem('driver_dist_' + s.driverId);
+        if (saved) setDistance(Number(saved));
+      }
+    } catch {}
+
     fetchData(s.linkedParentIds);
     fetchSettings();
 
-    // ── Realtime subscription to students table ──
+    // ── Realtime subscription to students table (for status dispatch sync) ──
     const sub = supabase
       .channel('driver_students_' + s.driverId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => {
@@ -94,8 +103,7 @@ export default function DriverApp() {
         .in('parent_id', pids);
       if (error) throw error;
       setStudents(data || []);
-      const distRow = (data || []).find((st: any) => st.last_distance_meters != null);
-      if (distRow) setDistance(distRow.last_distance_meters);
+      // Do NOT read last_distance_meters from students table because that is the parent's location!
     } catch (e: any) {
       console.error('[driverFetchData]', e.message);
     } finally {
@@ -116,18 +124,14 @@ export default function DriverApp() {
     }
   };
 
-  // ── Update driver distance in database ──
-  const updateDistance = async (newDist: number) => {
+  // ── Update driver distance (driver's own location, independent from parent's) ──
+  const updateDistance = (newDist: number) => {
     setDistance(newDist);
-    if (!driverInfo || !driverInfo.linkedParentIds.length) return;
     try {
-      await supabase
-        .from('students')
-        .update({ last_distance_meters: newDist })
-        .in('parent_id', driverInfo.linkedParentIds);
-    } catch (e: any) {
-      console.error('[driverUpdateDistance]', e.message);
-    }
+      if (typeof window !== 'undefined' && driverInfo?.driverId) {
+        window.sessionStorage?.setItem('driver_dist_' + driverInfo.driverId, String(newDist));
+      }
+    } catch {}
   };
 
   // ── Get Driver's Real Live GPS Location ──
@@ -178,7 +182,7 @@ export default function DriverApp() {
     try {
       const { error } = await supabase
         .from('students')
-        .update({ status: 'dispatched', last_distance_meters: distance })
+        .update({ status: 'dispatched' })
         .in('parent_id', driverInfo.linkedParentIds)
         .eq('status', 'waiting');
       if (error) throw error;
