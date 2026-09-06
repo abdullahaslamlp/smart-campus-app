@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator, Alert, Platform, Pressable,
@@ -15,6 +15,8 @@ const SURFACE = '#f4f7fb';
 const BORDER = '#c3c7cd';
 const GREEN_DARK = '#065F46';
 const GREEN_BG = '#D1FAE5';
+const INDIGO = '#4338CA';
+const INDIGO_BG = '#E0E7FF';
 
 // ─── Haversine Distance Formula ────────────────────────────────────────────────
 function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -34,7 +36,7 @@ interface Student {
   grade?: string;
   gate?: string;
   parent_id: string;
-  status: 'waiting' | 'dispatched' | 'arrived';
+  status: 'waiting' | 'dispatched' | 'arrived' | 'received';
   last_distance_meters?: number | null;
 }
 
@@ -55,8 +57,19 @@ export default function DriverApp() {
   const [schoolLocation, setSchoolLocation] = useState({ lat: 31.4501, lng: 74.3012 });
   const [geofenceRadius, setGeofenceRadius] = useState(150);
   const [dispatching, setDispatching] = useState(false);
+  const [kidsArrivedLoading, setKidsArrivedLoading] = useState(false);
   const [locationStatus, requestLocationPermission] = Location.useForegroundPermissions();
   const [gpsLoading, setGpsLoading] = useState(false);
+
+  // ── Refs for auto-poll ──
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const geofenceRadiusRef = useRef(geofenceRadius);
+  const schoolLocationRef = useRef(schoolLocation);
+  const linkedParentIdsRef = useRef<string[]>([]);
+
+  // Keep refs in sync
+  useEffect(() => { geofenceRadiusRef.current = geofenceRadius; }, [geofenceRadius]);
+  useEffect(() => { schoolLocationRef.current = schoolLocation; }, [schoolLocation]);
 
   useEffect(() => {
     const s = getDriverSession();
@@ -66,6 +79,7 @@ export default function DriverApp() {
     }
     setAuthed(true);
     setDriverInfo(s);
+    linkedParentIdsRef.current = s.linkedParentIds;
 
     // Restore driver's own distance from session storage if present
     try {
@@ -78,7 +92,7 @@ export default function DriverApp() {
     fetchData(s.linkedParentIds);
     fetchSettings();
 
-    // ── Realtime subscription to students table (for status dispatch sync) ──
+    // ── Realtime subscription to students table ──
     const sub = supabase
       .channel('driver_students_' + s.driverId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => {
@@ -86,7 +100,10 @@ export default function DriverApp() {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(sub); };
+    return () => {
+      supabase.removeChannel(sub);
+      stopAutoPoll();
+    };
   }, []);
 
   const fetchData = async (pids: string[]) => {
@@ -103,7 +120,7 @@ export default function DriverApp() {
         .in('parent_id', pids);
       if (error) throw error;
       setStudents(data || []);
-      // Do NOT read last_distance_meters from students table because that is the parent's location!
+      // Do NOT read last_distance_meters from students table (that is the parent's location)
     } catch (e: any) {
       console.error('[driverFetchData]', e.message);
     } finally {
@@ -117,10 +134,60 @@ export default function DriverApp() {
         .from('school_settings').select('*').eq('id', 'primary').single();
       if (data) {
         setSchoolLocation({ lat: data.lat, lng: data.lng });
-        if (data.geofence_radius) setGeofenceRadius(data.geofence_radius);
+        schoolLocationRef.current = { lat: data.lat, lng: data.lng };
+        if (data.geofence_radius) {
+          setGeofenceRadius(data.geofence_radius);
+          geofenceRadiusRef.current = data.geofence_radius;
+        }
       }
     } catch (e: any) {
       console.error('[driverFetchSettings]', e.message);
+    }
+  };
+
+  // ── Auto-poll: start when any student is dispatched but not yet received ──
+  const dispatchedStudents = students.filter(s => s.status === 'dispatched');
+  const receivedStudents = students.filter(s => s.status === 'received');
+  const allDispatched = dispatchedStudents.length > 0 || receivedStudents.length > 0;
+  const allReceived = dispatchedStudents.length === 0 && receivedStudents.length > 0 && students.filter(s => s.status === 'waiting').length === 0;
+
+  useEffect(() => {
+    if (dispatchedStudents.length > 0) {
+      startAutoPoll();
+    } else {
+      stopAutoPoll();
+    }
+  }, [dispatchedStudents.length]);
+
+  const startAutoPoll = () => {
+    if (pollIntervalRef.current) return;
+    pollIntervalRef.current = setInterval(() => {
+      silentLocationCheck();
+    }, 30000);
+  };
+
+  const stopAutoPoll = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const silentLocationCheck = async () => {
+    if (!linkedParentIdsRef.current.length) return;
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const dist = haversine(
+        loc.coords.latitude, loc.coords.longitude,
+        schoolLocationRef.current.lat, schoolLocationRef.current.lng
+      );
+      const rounded = Math.round(dist);
+      // If driver has left the geofence → kids are safely in vehicle, auto-mark received
+      if (rounded > geofenceRadiusRef.current) {
+        await markKidsReceived(linkedParentIdsRef.current);
+      }
+    } catch (e: any) {
+      console.warn('[AutoPoll] Driver location check failed:', e.message);
     }
   };
 
@@ -159,7 +226,6 @@ export default function DriverApp() {
     }
   };
 
-  // ── Check if driver is within allowed geofence distance ──
   const isCloseEnough = distance !== null && distance <= geofenceRadius;
 
   // ── Dispatch all waiting students assigned to this driver ──
@@ -193,7 +259,36 @@ export default function DriverApp() {
     }
   };
 
+  // ── Kids Arrived — driver confirms kids have boarded ──
+  const markKidsReceived = async (pids: string[]) => {
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ status: 'received' })
+        .in('parent_id', pids)
+        .eq('status', 'dispatched');
+      if (error) throw error;
+      stopAutoPoll();
+    } catch (e: any) {
+      console.error('[markKidsReceived]', e.message);
+      throw e;
+    }
+  };
+
+  const handleKidsArrived = async () => {
+    if (!driverInfo) return;
+    setKidsArrivedLoading(true);
+    try {
+      await markKidsReceived(driverInfo.linkedParentIds);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setKidsArrivedLoading(false);
+    }
+  };
+
   const handleLogout = () => {
+    stopAutoPoll();
     setDriverSession(null);
     router.replace('/');
   };
@@ -207,7 +302,61 @@ export default function DriverApp() {
   }
 
   const waitingCount = students.filter(s => s.status === 'waiting').length;
-  const dispatchedCount = students.filter(s => s.status === 'dispatched' || s.status === 'arrived').length;
+  const dispatchedCount = students.filter(s => s.status === 'dispatched').length;
+  const receivedCount = students.filter(s => s.status === 'received').length;
+
+  // ── Bottom bar content ──
+  const renderBottomBar = () => {
+    if (allReceived) {
+      return (
+        <View style={styles.receivedCard}>
+          <Text style={styles.receivedIcon}>🏠</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.receivedTitle}>All Kids Safely Received!</Text>
+            <Text style={styles.receivedSub}>Admin & guards have been notified. Safe journey!</Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (dispatchedCount > 0) {
+      return (
+        <Pressable
+          style={[styles.checkInBtn, { backgroundColor: INDIGO }, kidsArrivedLoading && { opacity: 0.7 }]}
+          onPress={handleKidsArrived}
+          disabled={kidsArrivedLoading}
+        >
+          {kidsArrivedLoading
+            ? <ActivityIndicator color={WHITE} />
+            : <Text style={styles.checkInBtnText}>🧒 Kids Arrived — Tap to Confirm ({dispatchedCount})</Text>
+          }
+        </Pressable>
+      );
+    }
+
+    return (
+      <Pressable
+        style={[
+          styles.checkInBtn,
+          (!isCloseEnough || waitingCount === 0 || dispatching) && styles.checkInDisabled,
+        ]}
+        onPress={handleCheckInAll}
+        disabled={!isCloseEnough || waitingCount === 0 || dispatching}
+      >
+        {dispatching ? (
+          <ActivityIndicator color={WHITE} />
+        ) : (
+          <Text style={[styles.checkInBtnText, (!isCloseEnough || waitingCount === 0) && { color: '#767779' }]}>
+            {waitingCount === 0
+              ? '✓ All Students Dispatched'
+              : !isCloseEnough
+                ? `🚫 Too Far — Must be ≤${geofenceRadius}m (${distance ?? '—'}m)`
+                : `🛺 Notify Gate for All (${waitingCount} Waiting)`}
+          </Text>
+        )}
+      </Pressable>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -244,6 +393,10 @@ export default function DriverApp() {
             <View style={[styles.statBox, { backgroundColor: GREEN_BG }]}>
               <Text style={[styles.statNum, { color: GREEN_DARK }]}>{dispatchedCount}</Text>
               <Text style={[styles.statLabel, { color: GREEN_DARK }]}>Dispatched</Text>
+            </View>
+            <View style={[styles.statBox, { backgroundColor: INDIGO_BG }]}>
+              <Text style={[styles.statNum, { color: INDIGO }]}>{receivedCount}</Text>
+              <Text style={[styles.statLabel, { color: INDIGO }]}>Received</Text>
             </View>
           </View>
 
@@ -286,6 +439,16 @@ export default function DriverApp() {
                 </Pressable>
               ))}
             </View>
+
+            {/* Auto-poll indicator — shown when students are dispatched */}
+            {dispatchedCount > 0 && (
+              <View style={styles.autoPollBadge}>
+                <View style={styles.autoPollDot} />
+                <Text style={styles.autoPollText}>
+                  Auto-detecting departure every 30s
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -301,17 +464,27 @@ export default function DriverApp() {
           </View>
         ) : (
           students.map(item => {
-            const isDispatched = item.status === 'dispatched' || item.status === 'arrived';
+            const isDispatched = item.status === 'dispatched';
+            const isReceived = item.status === 'received';
+            const statusColor = isReceived ? INDIGO : isDispatched ? '#10B981' : '#f59e0b';
+            const statusBg = isReceived ? INDIGO_BG : isDispatched ? GREEN_BG : '#fef3c7';
+            const statusLabel = isReceived ? 'RECEIVED 🏠' : isDispatched ? 'DISPATCHED' : 'WAITING';
+            const cardBg = isReceived ? '#f5f3ff' : isDispatched ? '#f0fdf4' : WHITE;
+            const cardBorder = isReceived ? INDIGO : isDispatched ? '#10B981' : BORDER;
             return (
-              <View key={item.id} style={[styles.childCard, isDispatched && { borderColor: '#10B981', backgroundColor: '#f0fdf4' }]}>
-                <View style={[styles.childStripe, { backgroundColor: isDispatched ? '#10B981' : '#f59e0b' }]} />
+              <View key={item.id} style={[styles.childCard, (isDispatched || isReceived) && { borderColor: cardBorder, backgroundColor: cardBg }]}>
+                <View style={[styles.childStripe, { backgroundColor: statusColor }]} />
                 <View style={styles.childAvatar}>
                   <Text style={{ fontSize: 24 }}>👦</Text>
                 </View>
                 <View style={styles.childInfo}>
                   <Text style={styles.childName}>{item.name}</Text>
                   <Text style={styles.childMeta}>{item.grade || 'Student'} • Parent: {item.parent_id}</Text>
-                  {isDispatched ? (
+                  {isReceived ? (
+                    <Text style={{ fontSize: 11, color: INDIGO, fontWeight: '700', marginTop: 2 }}>
+                      🏠 Safely received & departed school
+                    </Text>
+                  ) : isDispatched ? (
                     <Text style={{ fontSize: 11, color: GREEN_DARK, fontWeight: '700', marginTop: 2 }}>
                       ✓ Dispatched / Ready at Gate ({item.gate || 'Gate A'})
                     </Text>
@@ -321,9 +494,9 @@ export default function DriverApp() {
                     </Text>
                   )}
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: isDispatched ? GREEN_BG : '#fef3c7' }]}>
-                  <Text style={[styles.statusText, { color: isDispatched ? GREEN_DARK : '#b45309' }]}>
-                    {isDispatched ? 'DISPATCHED' : 'WAITING'}
+                <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
+                  <Text style={[styles.statusText, { color: statusColor }]}>
+                    {statusLabel}
                   </Text>
                 </View>
               </View>
@@ -333,28 +506,9 @@ export default function DriverApp() {
 
       </ScrollView>
 
-      {/* ── Check-in Action Bar ── */}
+      {/* ── Action Bar ── */}
       <View style={styles.bottomBar}>
-        <Pressable
-          style={[
-            styles.checkInBtn,
-            (!isCloseEnough || waitingCount === 0 || dispatching) && styles.checkInDisabled,
-          ]}
-          onPress={handleCheckInAll}
-          disabled={!isCloseEnough || waitingCount === 0 || dispatching}
-        >
-          {dispatching ? (
-            <ActivityIndicator color={WHITE} />
-          ) : (
-            <Text style={[styles.checkInBtnText, (!isCloseEnough || waitingCount === 0) && { color: '#767779' }]}>
-              {waitingCount === 0
-                ? '✓ All Students Dispatched'
-                : !isCloseEnough
-                  ? `🚫 Too Far — Must be ≤${geofenceRadius}m (${distance ?? '—'}m)`
-                  : `🛺 Notify Gate for All (${waitingCount} Waiting)`}
-            </Text>
-          )}
-        </Pressable>
+        {renderBottomBar()}
       </View>
     </View>
   );
@@ -388,10 +542,10 @@ const styles = StyleSheet.create({
   },
   heroTitle: { fontSize: 18, fontWeight: '800', color: GREEN_DARK },
   heroSub: { fontSize: 13, color: '#767779', textAlign: 'center' },
-  statRow: { flexDirection: 'row', gap: 12, width: '100%', marginTop: 4 },
-  statBox: { flex: 1, borderRadius: 12, padding: 14, alignItems: 'center' },
-  statNum: { fontSize: 26, fontWeight: '800' },
-  statLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', marginTop: 2 },
+  statRow: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 4 },
+  statBox: { flex: 1, borderRadius: 12, padding: 12, alignItems: 'center' },
+  statNum: { fontSize: 24, fontWeight: '800' },
+  statLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginTop: 2 },
   gpsBtn: { backgroundColor: GREEN_DARK, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10, alignSelf: 'stretch', alignItems: 'center' },
   gpsBtnText: { color: WHITE, fontWeight: '700', fontSize: 14 },
   radiusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
@@ -400,6 +554,13 @@ const styles = StyleSheet.create({
   simBtn: { backgroundColor: '#e8e8ea', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6 },
   simBtnActive: { backgroundColor: GREEN_DARK },
   simBtnText: { fontSize: 11, fontWeight: '600', color: '#767779' },
+  autoPollBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 99, marginTop: 2,
+  },
+  autoPollDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#f59e0b' },
+  autoPollText: { fontSize: 11, fontWeight: '600', color: '#b45309' },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: GREEN_DARK, marginBottom: 12 },
   emptyCard: { backgroundColor: WHITE, borderRadius: 14, padding: 28, alignItems: 'center', gap: 6, borderWidth: 1, borderColor: BORDER },
   emptyText: { fontSize: 15, fontWeight: '600', color: '#767779' },
@@ -429,5 +590,14 @@ const styles = StyleSheet.create({
     shadowColor: GREEN_DARK, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4,
   },
   checkInDisabled: { backgroundColor: '#cbd5e1' },
-  checkInBtnText: { fontSize: 16, fontWeight: '700', color: WHITE },
+  checkInBtnText: { fontSize: 15, fontWeight: '700', color: WHITE },
+  receivedCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: GREEN_BG, borderRadius: 14,
+    paddingHorizontal: 18, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#6ee7b7',
+  },
+  receivedIcon: { fontSize: 28 },
+  receivedTitle: { fontSize: 14, fontWeight: '800', color: GREEN_DARK },
+  receivedSub: { fontSize: 12, color: '#047857', marginTop: 2 },
 });

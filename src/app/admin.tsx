@@ -18,7 +18,7 @@ interface TestResult {
 
 interface Student {
   id: string; name: string; grade?: string; gate?: string;
-  parent_id: string; status: 'waiting' | 'dispatched' | 'arrived';
+  parent_id: string; status: 'waiting' | 'dispatched' | 'arrived' | 'received';
   last_distance_meters?: number | null;
 }
 
@@ -524,6 +524,7 @@ export default function AdminPortal() {
   const statusStyle = (s: string) => {
     if (s === 'dispatched') return { bg: '#d1e4ff', text: '#001d35' };
     if (s === 'arrived') return { bg: '#b7d7ff', text: '#28496a' };
+    if (s === 'received') return { bg: '#e0e7ff', text: '#3730a3' };
     return { bg: '#e2e2e4', text: '#43474d' };
   };
 
@@ -611,6 +612,7 @@ export default function AdminPortal() {
   });
 
   const dispatchedCount = students.filter(x => x.status === 'dispatched').length;
+  const receivedCount = students.filter(x => x.status === 'received').length;
   // Legacy filtered (dashboard uses applyFilter below)
   const filtered = applyFilter(students);
 
@@ -627,6 +629,7 @@ export default function AdminPortal() {
         {[
           { label: 'TOTAL STUDENTS', value: studentsLoading ? '…' : String(filtered.length === students.length ? students.length : `${filtered.length}/${students.length}`), sub: filterClass ? `Grade ${filterClass}${filterSection ? '-' + filterSection : ''}` : 'Enrolled', icon: '👥', subColor: SLATE },
           { label: 'ACTIVE DISMISSALS', value: String(filtered.filter(x => x.status === 'dispatched').length), sub: 'In progress', icon: '🚶', subColor: SLATE },
+          { label: 'RECEIVED TODAY', value: String(filtered.filter(x => x.status === 'received').length), sub: 'Safely home', icon: '🏠', subColor: '#3730a3' },
           { label: 'PARENT ACCOUNTS', value: accountsLoading ? '…' : String(accounts.length), sub: String(accounts.filter(a => a.is_active).length) + ' active', icon: '👨‍👩‍👧', subColor: '#10B981' },
           { label: 'GEOFENCE RADIUS', value: `${geofenceRadius}m`, sub: 'Standard Range', icon: '📡', subColor: MUTED },
         ].map((kpi, i) => (
@@ -678,7 +681,9 @@ export default function AdminPortal() {
                     <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
                     <View style={s.td}>
                       <View style={[s.pill, { backgroundColor: st.bg }]}>
-                        <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+                        <Text style={[s.pillText, { color: st.text }]}>
+                          {item.status === 'received' ? 'Received 🏠' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                        </Text>
                       </View>
                     </View>
                   </Pressable>
@@ -774,7 +779,9 @@ export default function AdminPortal() {
                       <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
                       <View style={s.td}>
                         <View style={[s.pill, { backgroundColor: st.bg }]}>
-                          <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
+                          <Text style={[s.pillText, { color: st.text }]}>
+                            {item.status === 'received' ? 'Received 🏠' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                          </Text>
                         </View>
                       </View>
                     </View>
@@ -818,24 +825,29 @@ export default function AdminPortal() {
               {pairs.length === 0
                 ? <View style={s.loader}><Text style={s.loaderText}>No guardians match this filter.</Text></View>
                 : pairs.map(([pid, kids]) => {
-                const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
-                const allD = kids.every(k => k.status === 'dispatched');
-                const anyD = kids.some(k => k.status === 'dispatched');
-                return (
-                  <View key={pid} style={s.tableRow}>
-                    <Text style={[s.td, s.tdBold]}>{pid}</Text>
-                    <View style={[s.td, { flex: 2 }]}>{kids.map(k => <Text key={k.id} style={{ fontSize: 12, color: TEXT }}>• {k.name}</Text>)}</View>
-                    <Text style={s.td}>{[...new Set(kids.map(k => k.gate))].join(', ') || '—'}</Text>
-                    <Text style={[s.td, { color: SLATE }]}>{dist != null ? `${dist}m` : '—'}</Text>
-                    <View style={s.td}>
-                      <View style={[s.pill, { backgroundColor: allD ? '#d1e4ff' : anyD ? '#b7d7ff' : '#e2e2e4' }]}>
-                        <Text style={[s.pillText, { color: allD ? '#001d35' : anyD ? '#28496a' : '#43474d' }]}>
-                          {allD ? 'All Dispatched' : anyD ? 'Partial' : 'Waiting'}
-                        </Text>
+                  const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
+                  const allR = kids.every(k => k.status === 'received');
+                  const anyR = kids.some(k => k.status === 'received');
+                  const allD = kids.every(k => k.status === 'dispatched' || k.status === 'received');
+                  const anyD = kids.some(k => k.status === 'dispatched');
+                  const pillBg = allR ? '#e0e7ff' : allD ? '#d1e4ff' : anyD || anyR ? '#b7d7ff' : '#e2e2e4';
+                  const pillText = allR ? '#3730a3' : allD ? '#001d35' : anyD || anyR ? '#28496a' : '#43474d';
+                  const pillLabel = allR ? 'All Received 🏠' : allD ? 'All Dispatched' : anyD || anyR ? 'Partial' : 'Waiting';
+                  return (
+                    <View key={pid} style={s.tableRow}>
+                      <Text style={[s.td, s.tdBold]}>{pid}</Text>
+                      <View style={[s.td, { flex: 2 }]}>{kids.map(k => <Text key={k.id} style={{ fontSize: 12, color: TEXT }}>• {k.name}</Text>)}</View>
+                      <Text style={s.td}>{[...new Set(kids.map(k => k.gate))].join(', ') || '—'}</Text>
+                      <Text style={[s.td, { color: SLATE }]}>{dist != null ? `${dist}m` : '—'}</Text>
+                      <View style={s.td}>
+                        <View style={[s.pill, { backgroundColor: pillBg }]}>
+                          <Text style={[s.pillText, { color: pillText }]}>
+                            {pillLabel}
+                          </Text>
+                        </View>
                       </View>
                     </View>
-                  </View>
-                );
+                  );
               })}
             </ScrollView>
           </View>

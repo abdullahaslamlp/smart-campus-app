@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
-  ActivityIndicator, Alert, Image, Platform,
+  ActivityIndicator, Alert, Platform,
   Pressable, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import * as Location from 'expo-location';
@@ -26,6 +26,10 @@ const SLATE_LIGHT = '#b0cce8';
 const WHITE = '#ffffff';
 const SURFACE = '#f4f7fb';
 const BORDER = '#c3c7cd';
+const GREEN_DARK = '#065F46';
+const GREEN_BG = '#D1FAE5';
+const INDIGO = '#4338CA';
+const INDIGO_BG = '#E0E7FF';
 
 export default function ParentApp() {
   const router = useRouter();
@@ -43,8 +47,23 @@ export default function ParentApp() {
   const [schoolLocation, setSchoolLocation] = useState({ lat: 31.4501, lng: 74.3012 });
   const [distance, setDistance] = useState<number | null>(null);
   const [isCheckedIn, setIsCheckedIn] = useState(false);
+  const [isReceived, setIsReceived] = useState(false);
   const [locationStatus, requestLocationPermission] = Location.useForegroundPermissions();
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [kidsArrivedLoading, setKidsArrivedLoading] = useState(false);
+
+  // ── Refs for auto-poll ──
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const geofenceRadiusRef = useRef(geofenceRadius);
+  const schoolLocationRef = useRef(schoolLocation);
+  const isReceivedRef = useRef(isReceived);
+  const currentParentIdRef = useRef(currentParentId);
+
+  // Keep refs in sync with state
+  useEffect(() => { geofenceRadiusRef.current = geofenceRadius; }, [geofenceRadius]);
+  useEffect(() => { schoolLocationRef.current = schoolLocation; }, [schoolLocation]);
+  useEffect(() => { isReceivedRef.current = isReceived; }, [isReceived]);
+  useEffect(() => { currentParentIdRef.current = currentParentId; }, [currentParentId]);
 
   // ── On mount: redirect if not authenticated ──
   useEffect(() => {
@@ -56,6 +75,7 @@ export default function ParentApp() {
     setAuthed(true);
     setCurrentParentId(s.parentId);
     setCurrentFullName(s.fullName);
+    currentParentIdRef.current = s.parentId;
     fetchData(s.parentId);
     fetchSettings();
 
@@ -66,8 +86,56 @@ export default function ParentApp() {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(sub); };
+    return () => {
+      supabase.removeChannel(sub);
+      stopAutoPoll();
+    };
   }, []);
+
+  // ── Start / stop auto-poll based on dispatched state ──
+  useEffect(() => {
+    if (isCheckedIn && !isReceived) {
+      startAutoPoll();
+    } else {
+      stopAutoPoll();
+    }
+  }, [isCheckedIn, isReceived]);
+
+  const startAutoPoll = () => {
+    if (pollIntervalRef.current) return; // already polling
+    pollIntervalRef.current = setInterval(() => {
+      silentLocationCheck();
+    }, 30000); // every 30 seconds
+  };
+
+  const stopAutoPoll = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  // ── Silent location check (used by auto-poll) ──
+  const silentLocationCheck = async () => {
+    if (isReceivedRef.current) {
+      stopAutoPoll();
+      return;
+    }
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const dist = haversine(
+        loc.coords.latitude, loc.coords.longitude,
+        schoolLocationRef.current.lat, schoolLocationRef.current.lng
+      );
+      const rounded = Math.round(dist);
+      // If parent has driven outside the geofence → kids have boarded, auto-mark received
+      if (rounded > geofenceRadiusRef.current) {
+        await markKidsReceived(currentParentIdRef.current);
+      }
+    } catch (e: any) {
+      console.warn('[AutoPoll] Location check failed:', e.message);
+    }
+  };
 
   const fetchData = async (pid: string) => {
     setLoadingStudents(true);
@@ -78,8 +146,11 @@ export default function ParentApp() {
         .eq('parent_id', pid);
       if (error) throw error;
       setStudents(data || []);
-      // Always sync isCheckedIn from DB — resets when admin clears status
-      setIsCheckedIn((data || []).some((s: any) => s.status === 'dispatched'));
+      // Sync status flags from DB — resets when admin clears status
+      const dispatched = (data || []).some((s: any) => s.status === 'dispatched');
+      const received = (data || []).some((s: any) => s.status === 'received');
+      setIsCheckedIn(dispatched || received);
+      setIsReceived(received);
       // Restore last known distance; reset to null if admin cleared it
       const distRow = (data || []).find((s: any) => s.last_distance_meters != null);
       setDistance(distRow ? distRow.last_distance_meters : null);
@@ -96,7 +167,11 @@ export default function ParentApp() {
         .from('school_settings').select('*').eq('id', 'primary').single();
       if (data) {
         setSchoolLocation({ lat: data.lat, lng: data.lng });
-        if (data.geofence_radius) setGeofenceRadius(data.geofence_radius);
+        schoolLocationRef.current = { lat: data.lat, lng: data.lng };
+        if (data.geofence_radius) {
+          setGeofenceRadius(data.geofence_radius);
+          geofenceRadiusRef.current = data.geofence_radius;
+        }
       }
     } catch (e: any) {
       console.error('[fetchSettings]', e.message);
@@ -138,7 +213,7 @@ export default function ParentApp() {
     }
   };
 
-  // ─── Check-in ─────────────────────────────────────────────────────────────
+  // ─── Check-in (arrive at school) ──────────────────────────────────────────
   const handleCheckIn = async () => {
     if (distance == null || distance > geofenceRadius) return;
     try {
@@ -153,8 +228,36 @@ export default function ParentApp() {
     }
   };
 
+  // ─── Kids Arrived (kids boarded, parent leaving school) ───────────────────
+  const markKidsReceived = async (pid: string) => {
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ status: 'received' })
+        .eq('parent_id', pid)
+        .eq('status', 'dispatched');
+      if (error) throw error;
+      setIsReceived(true);
+      stopAutoPoll();
+    } catch (e: any) {
+      console.error('[markKidsReceived]', e.message);
+    }
+  };
+
+  const handleKidsArrived = async () => {
+    setKidsArrivedLoading(true);
+    try {
+      await markKidsReceived(currentParentId);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setKidsArrivedLoading(false);
+    }
+  };
+
   // ─── Logout ───────────────────────────────────────────────────────────────
   const handleLogout = () => {
+    stopAutoPoll();
     setParentSession(null);
     router.replace('/');
   };
@@ -168,6 +271,56 @@ export default function ParentApp() {
       </View>
     );
   }
+
+  // ── Bottom bar content ──
+  const renderBottomBar = () => {
+    if (isReceived) {
+      return (
+        <View style={styles.receivedCard}>
+          <Text style={styles.receivedIcon}>🏠</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.receivedTitle}>Kids Safely Received!</Text>
+            <Text style={styles.receivedSub}>Admin & guards have been notified.</Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (isCheckedIn) {
+      return (
+        <Pressable
+          style={[styles.checkInBtn, { backgroundColor: INDIGO }]}
+          onPress={handleKidsArrived}
+          disabled={kidsArrivedLoading}
+        >
+          {kidsArrivedLoading
+            ? <ActivityIndicator color={WHITE} />
+            : <Text style={styles.checkInBtnText}>🧒 Kids Arrived — Tap to Confirm</Text>
+          }
+        </Pressable>
+      );
+    }
+
+    return (
+      <Pressable
+        style={[
+          styles.checkInBtn,
+          !isCloseEnough && styles.checkInDisabled,
+        ]}
+        onPress={handleCheckIn}
+        disabled={!isCloseEnough}
+      >
+        <Text style={[
+          styles.checkInBtnText,
+          !isCloseEnough && { color: '#767779' },
+        ]}>
+          {isCloseEnough
+            ? '🚗 Check In for Dismissal'
+            : `Too far — need ≤${geofenceRadius}m`}
+        </Text>
+      </Pressable>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -226,6 +379,16 @@ export default function ParentApp() {
               <Text style={styles.simBtnText}>Near ({Math.round(geofenceRadius * 0.3)}m)</Text>
             </Pressable>
           </View>
+
+          {/* Auto-poll indicator */}
+          {isCheckedIn && !isReceived && (
+            <View style={styles.autoPollBadge}>
+              <View style={styles.autoPollDot} />
+              <Text style={styles.autoPollText}>
+                Auto-detecting departure every 30s
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── My Children ── */}
@@ -245,9 +408,10 @@ export default function ParentApp() {
         ) : students.map((child, idx) => {
           const dispatched = child.status === 'dispatched';
           const arrived = child.status === 'arrived';
-          const statusColor = dispatched ? '#10B981' : arrived ? '#3B82F6' : '#F59E0B';
-          const statusBg = dispatched ? '#D1FAE5' : arrived ? '#DBEAFE' : '#FEF3C7';
-          const statusLabel = dispatched ? 'DISPATCHED' : arrived ? 'ARRIVED' : 'IN CLASS';
+          const received = child.status === 'received';
+          const statusColor = received ? INDIGO : dispatched ? '#10B981' : arrived ? '#3B82F6' : '#F59E0B';
+          const statusBg = received ? INDIGO_BG : dispatched ? '#D1FAE5' : arrived ? '#DBEAFE' : '#FEF3C7';
+          const statusLabel = received ? 'RECEIVED 🏠' : dispatched ? 'DISPATCHED' : arrived ? 'ARRIVED' : 'IN CLASS';
           return (
             <View key={child.id} style={styles.childCard}>
               <View style={[styles.childStripe, { backgroundColor: statusColor }]} />
@@ -266,28 +430,9 @@ export default function ParentApp() {
         })}
       </ScrollView>
 
-      {/* ── Bottom Check-In Bar ── */}
+      {/* ── Bottom Action Bar ── */}
       <View style={styles.bottomBar}>
-        <Pressable
-          style={[
-            styles.checkInBtn,
-            isCheckedIn && { backgroundColor: '#10B981' },
-            !isCloseEnough && !isCheckedIn && styles.checkInDisabled,
-          ]}
-          onPress={handleCheckIn}
-          disabled={!isCloseEnough || isCheckedIn}
-        >
-          <Text style={[
-            styles.checkInBtnText,
-            !isCloseEnough && !isCheckedIn && { color: '#767779' },
-          ]}>
-            {isCheckedIn
-              ? '✅ Checked In — Teacher Notified'
-              : isCloseEnough
-                ? '🚗 Check In for Dismissal'
-                : `Too far — need ≤${geofenceRadius}m`}
-          </Text>
-        </Pressable>
+        {renderBottomBar()}
       </View>
     </View>
   );
@@ -299,7 +444,7 @@ const styles = StyleSheet.create({
     height: 64, backgroundColor: WHITE,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'web' ? 0 : 44,   // clear Expo dev-client buttons on mobile
+    paddingTop: Platform.OS === 'web' ? 0 : 44,
     paddingBottom: Platform.OS === 'web' ? 0 : 10,
     borderBottomWidth: 1, borderBottomColor: BORDER,
     shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2,
@@ -334,6 +479,12 @@ const styles = StyleSheet.create({
   simRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
   simBtn: { backgroundColor: '#e8e8ea', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 8 },
   simBtnText: { fontSize: 12, fontWeight: '600', color: '#767779' },
+  autoPollBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 99, marginTop: 4,
+  },
+  autoPollDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#f59e0b' },
+  autoPollText: { fontSize: 11, fontWeight: '600', color: '#b45309' },
   sectionTitle: { fontSize: 20, fontWeight: '800', color: SLATE_DARK, marginBottom: 12 },
   emptyCard: { backgroundColor: WHITE, borderRadius: 16, padding: 32, alignItems: 'center', gap: 8, borderWidth: 1, borderColor: BORDER },
   emptyText: { fontSize: 16, fontWeight: '600', color: '#767779' },
@@ -365,4 +516,13 @@ const styles = StyleSheet.create({
   },
   checkInDisabled: { backgroundColor: '#e8e8ea' },
   checkInBtnText: { fontSize: 16, fontWeight: '700', color: WHITE },
+  receivedCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: GREEN_BG, borderRadius: 16,
+    paddingHorizontal: 20, paddingVertical: 14,
+    borderWidth: 1, borderColor: '#6ee7b7',
+  },
+  receivedIcon: { fontSize: 28 },
+  receivedTitle: { fontSize: 15, fontWeight: '800', color: GREEN_DARK },
+  receivedSub: { fontSize: 12, color: '#047857', marginTop: 2 },
 });
