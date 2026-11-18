@@ -4,7 +4,7 @@ import { Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getDriverSession, setDriverSession } from './driver-login';
-import { useBranch } from '../lib/tenant';
+import { isSessionError, rpcMessage, useBranch, useBranchPings } from '../lib/tenant';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
   StudentRow, color, space, type,
@@ -46,6 +46,7 @@ export default function DriverApp() {
     schoolName: string;
   } | null>(null);
   const branchId = getDriverSession()?.branchId ?? '';
+  const token = getDriverSession()?.token ?? '';
   const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -87,43 +88,39 @@ export default function DriverApp() {
       }
     } catch {}
 
-    fetchData(s.linkedParentIds);
-
-    // ── Realtime subscription to this branch's students ──
-    const sub = supabase
-      .channel('driver_students_' + s.branchId + '_' + s.driverId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `branch_id=eq.${s.branchId}` }, () => {
-        fetchData(s.linkedParentIds);
-      })
-      .subscribe();
+    fetchData();
 
     return () => {
-      supabase.removeChannel(sub);
       stopAutoPoll();
     };
   }, []);
 
-  const fetchData = async (pids: string[]) => {
-    if (!pids || pids.length === 0) {
-      setStudents([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+  // ── Live updates: refetch on the campus ping for students / driver accounts ──
+  useBranchPings(branchId, what => {
+    if (what === 'students' || what === 'transporter_accounts') fetchData();
+  });
+
+  // Students + the driver's current route come from the server (route edits by the admin apply live).
+  const fetchData = async () => {
     try {
-      const { data, error } = await supabase
-        .from('students')
-        .select('*')
-        .eq('branch_id', branchId)
-        .in('parent_id', pids);
+      const { data, error } = await supabase.rpc('driver_state', { p_token: token });
       if (error) throw error;
-      setStudents(data || []);
-      // Do NOT read last_distance_meters from students table (that is the parent's location)
+      const linked: string[] = data?.driver?.linked_parent_ids ?? [];
+      linkedParentIdsRef.current = linked;
+      setDriverInfo(prev => (prev ? { ...prev, linkedParentIds: linked } : prev));
+      setStudents(data?.students ?? []);
+      // Do NOT read last_distance_meters (that is the parents' location)
     } catch (e: any) {
-      console.error('[driverFetchData]', e.message);
+      if (isSessionError(e)) handleLogout();
+      else console.error('[driverFetchData]', e.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRpcError = (e: any, prefix: string) => {
+    if (isSessionError(e)) { handleLogout(); return; }
+    setNotice(`${prefix}: ${rpcMessage(e)}`);
   };
 
   // ── Geofence settings come from the driver's branch (updates live) ──
@@ -174,10 +171,11 @@ export default function DriverApp() {
       const rounded = Math.round(dist);
       // If driver has left the geofence → kids are safely in vehicle, auto-mark received
       if (rounded > geofenceRadiusRef.current) {
-        await markKidsReceived(linkedParentIdsRef.current);
+        await markKidsReceived();
       }
     } catch (e: any) {
-      console.warn('[AutoPoll] Driver location check failed:', e.message);
+      if (isSessionError(e)) handleLogout();
+      else console.warn('[AutoPoll] Driver location check failed:', e.message);
     }
   };
 
@@ -234,44 +232,32 @@ export default function DriverApp() {
     setNotice(null);
     setDispatching(true);
     try {
-      const { error } = await supabase
-        .from('students')
-        .update({ status: 'dispatched' })
-        .eq('branch_id', branchId)
-        .in('parent_id', driverInfo.linkedParentIds)
-        .eq('status', 'waiting');
+      // Server re-checks the campus status and the geofence radius.
+      const { error } = await supabase.rpc('driver_check_in', { p_token: token, p_meters: distance });
       if (error) throw error;
+      fetchData();
     } catch (e: any) {
-      setNotice(`Check-in didn’t go through: ${e.message}`);
+      handleRpcError(e, 'Check-in didn’t go through');
     } finally {
       setDispatching(false);
     }
   };
 
   // ── Kids Arrived — driver confirms kids have boarded ──
-  const markKidsReceived = async (pids: string[]) => {
-    try {
-      const { error } = await supabase
-        .from('students')
-        .update({ status: 'received' })
-        .eq('branch_id', branchId)
-        .in('parent_id', pids)
-        .eq('status', 'dispatched');
-      if (error) throw error;
-      stopAutoPoll();
-    } catch (e: any) {
-      console.error('[markKidsReceived]', e.message);
-      throw e;
-    }
+  const markKidsReceived = async () => {
+    const { error } = await supabase.rpc('driver_mark_received', { p_token: token });
+    if (error) throw error;
+    stopAutoPoll();
+    fetchData();
   };
 
   const handleKidsArrived = async () => {
     if (!driverInfo) return;
     setKidsArrivedLoading(true);
     try {
-      await markKidsReceived(driverInfo.linkedParentIds);
+      await markKidsReceived();
     } catch (e: any) {
-      setNotice(`Couldn’t confirm pickup: ${e.message}`);
+      handleRpcError(e, 'Couldn’t confirm pickup');
     } finally {
       setKidsArrivedLoading(false);
     }
@@ -279,6 +265,7 @@ export default function DriverApp() {
 
   const handleLogout = () => {
     stopAutoPoll();
+    if (token) supabase.rpc('app_logout', { p_token: token }).then(() => {}, () => {});
     setDriverSession(null);
     router.replace('/');
   };

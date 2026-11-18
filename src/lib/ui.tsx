@@ -6,7 +6,16 @@ import {
   TextInputProps, View, ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArrowRight, Check, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clock, Eye, EyeOff, Info,
+  LocateFixed, LucideIcon, MapPin, Pause, Search, TriangleAlert,
+} from 'lucide-react-native';
 import { BranchInfo, BranchOption, PAUSED_MESSAGE, searchBranches } from './tenant';
+
+export type { LucideIcon };
+
+/** Default stroke for every icon: thin enough to sit next to 13–15px text. */
+export const ICON_STROKE = 2;
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 export const color = {
@@ -91,15 +100,11 @@ export function SectionHeader({ title, aside }: { title: string; aside?: string 
   );
 }
 
-/** The SafePass mark: a small ink square with a check-shaped notch. */
+/** The SafePass mark: a small ink square with a check. */
 export function Mark({ size = 36 }: { size?: number }) {
-  const s = size;
   return (
-    <View style={{ width: s, height: s, borderRadius: s * 0.28, backgroundColor: color.accent, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{
-        width: s * 0.42, height: s * 0.22, borderLeftWidth: s * 0.09, borderBottomWidth: s * 0.09,
-        borderColor: '#FFFFFF', transform: [{ rotate: '-45deg' }], marginTop: -s * 0.08,
-      }} />
+    <View style={{ width: size, height: size, borderRadius: size * 0.28, backgroundColor: color.accent, alignItems: 'center', justifyContent: 'center' }}>
+      <Check size={size * 0.58} color="#FFFFFF" strokeWidth={3} />
     </View>
   );
 }
@@ -107,13 +112,15 @@ export function Mark({ size = 36 }: { size?: number }) {
 // ─── Buttons ──────────────────────────────────────────────────────────────────
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
 
-export function Button({ label, onPress, variant = 'primary', loading, disabled, size = 'md', style, full }: {
+export function Button({ label, onPress, variant = 'primary', loading, disabled, size = 'md', style, full, icon: Icon }: {
   label: string; onPress?: () => void; variant?: ButtonVariant; loading?: boolean; disabled?: boolean;
-  size?: 'sm' | 'md' | 'lg'; style?: StyleProp<ViewStyle>; full?: boolean;
+  size?: 'sm' | 'md' | 'lg'; style?: StyleProp<ViewStyle>; full?: boolean; icon?: LucideIcon;
 }) {
   const v = buttonVariants[variant];
   const h = size === 'lg' ? 52 : size === 'sm' ? 34 : 44;
   const off = disabled || loading;
+  const fg = disabled ? color.faint : v.fg;
+  const fontSize = size === 'sm' ? 13 : size === 'lg' ? 16 : 15;
   return (
     <Pressable
       onPress={onPress}
@@ -129,9 +136,12 @@ export function Button({ label, onPress, variant = 'primary', loading, disabled,
         style,
       ]}
     >
-      {loading
-        ? <ActivityIndicator color={v.fg} size="small" />
-        : <Text style={[styles.buttonText, { color: disabled ? color.faint : v.fg, fontSize: size === 'sm' ? 13 : size === 'lg' ? 16 : 15 }]}>{label}</Text>}
+      {loading ? <ActivityIndicator color={v.fg} size="small" /> : (
+        <>
+          {Icon ? <Icon size={fontSize + 2} color={fg} strokeWidth={ICON_STROKE} /> : null}
+          <Text style={[styles.buttonText, { color: fg, fontSize }]}>{label}</Text>
+        </>
+      )}
     </Pressable>
   );
 }
@@ -145,14 +155,19 @@ const buttonVariants: Record<ButtonVariant, { bg: string; fg: string; border: st
 };
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
-export function TextField({ label, hint, error, style, trailing, ...input }: TextInputProps & {
-  label: string; hint?: string; error?: string; trailing?: ReactNode;
+export function TextField({ label, hint, error, style, trailing, leading: Leading, ...input }: TextInputProps & {
+  label: string; hint?: string; error?: string; trailing?: ReactNode; leading?: LucideIcon;
 }) {
   const [focused, setFocused] = useState(false);
   return (
     <View style={{ gap: 6 }}>
       <Text style={type.label}>{label}</Text>
       <View style={[styles.inputWrap, focused && styles.inputFocused, !!error && { borderColor: color.danger }]}>
+        {Leading ? (
+          <View style={{ paddingLeft: space.md }} pointerEvents="none">
+            <Leading size={18} color={focused ? color.accent : color.faint} strokeWidth={ICON_STROKE} />
+          </View>
+        ) : null}
         <TextInput
           placeholderTextColor={color.faint}
           autoCapitalize="none"
@@ -161,7 +176,7 @@ export function TextField({ label, hint, error, style, trailing, ...input }: Tex
           {...input}
           onFocus={e => { setFocused(true); input.onFocus?.(e); }}
           onBlur={e => { setFocused(false); input.onBlur?.(e); }}
-          style={[styles.input, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any), style]}
+          style={[styles.input, !!Leading && { paddingLeft: space.sm }, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any), style]}
         />
         {trailing}
       </View>
@@ -181,7 +196,9 @@ export function PasswordField(props: TextInputProps & { label: string; hint?: st
       trailing={(
         <Pressable onPress={() => setVisible(v => !v)} hitSlop={8} style={styles.inputAction}
           accessibilityRole="button" accessibilityLabel={visible ? 'Hide password' : 'Show password'}>
-          <Text style={[type.small, { color: color.accent, fontWeight: '600' }]}>{visible ? 'Hide' : 'Show'}</Text>
+          {visible
+            ? <EyeOff size={18} color={color.muted} strokeWidth={ICON_STROKE} />
+            : <Eye size={18} color={color.muted} strokeWidth={ICON_STROKE} />}
         </Pressable>
       )}
     />
@@ -191,33 +208,36 @@ export function PasswordField(props: TextInputProps & { label: string; hint?: st
 // ─── Feedback ─────────────────────────────────────────────────────────────────
 export function Notice({ tone = 'info', title, children }: { tone?: 'info' | 'error' | 'warn' | 'success'; title?: string; children?: ReactNode }) {
   const t = {
-    info: { bg: color.accentSoft, fg: color.accent },
-    error: { bg: color.dangerSoft, fg: color.danger },
-    warn: { bg: color.warnSoft, fg: color.warn },
-    success: { bg: color.doneSoft, fg: color.done },
+    info: { bg: color.accentSoft, fg: color.accent, Icon: Info },
+    error: { bg: color.dangerSoft, fg: color.danger, Icon: CircleAlert },
+    warn: { bg: color.warnSoft, fg: color.warn, Icon: TriangleAlert },
+    success: { bg: color.doneSoft, fg: color.done, Icon: CircleCheck },
   }[tone];
   return (
     <View style={[styles.notice, { backgroundColor: t.bg }]} accessibilityRole={tone === 'error' ? 'alert' : undefined}>
-      {title ? <Text style={[type.label, { color: t.fg }]}>{title}</Text> : null}
-      {typeof children === 'string' ? <Text style={[type.small, { color: t.fg }]}>{children}</Text> : children}
+      <t.Icon size={18} color={t.fg} strokeWidth={ICON_STROKE} style={{ marginTop: 1 }} />
+      <View style={{ flex: 1, gap: 2 }}>
+        {title ? <Text style={[type.label, { color: t.fg }]}>{title}</Text> : null}
+        {typeof children === 'string' ? <Text style={[type.small, { color: t.fg }]}>{children}</Text> : children}
+      </View>
     </View>
   );
 }
 
 export type DismissalStatus = 'waiting' | 'dispatched' | 'arrived' | 'received';
 
-export const statusMeta: Record<DismissalStatus, { label: string; fg: string; bg: string }> = {
-  waiting: { label: 'In class', fg: color.waiting, bg: color.waitingSoft },
-  dispatched: { label: 'Sent to gate', fg: color.sent, bg: color.sentSoft },
-  arrived: { label: 'At gate', fg: color.sent, bg: color.sentSoft },
-  received: { label: 'Picked up', fg: color.done, bg: color.doneSoft },
+export const statusMeta: Record<DismissalStatus, { label: string; fg: string; bg: string; Icon: LucideIcon }> = {
+  waiting: { label: 'In class', fg: color.waiting, bg: color.waitingSoft, Icon: Clock },
+  dispatched: { label: 'Sent to gate', fg: color.sent, bg: color.sentSoft, Icon: ArrowRight },
+  arrived: { label: 'At gate', fg: color.sent, bg: color.sentSoft, Icon: MapPin },
+  received: { label: 'Picked up', fg: color.done, bg: color.doneSoft, Icon: Check },
 };
 
 export function StatusPill({ status }: { status: DismissalStatus }) {
   const m = statusMeta[status] ?? statusMeta.waiting;
   return (
     <View style={[styles.pill, { backgroundColor: m.bg }]}>
-      <View style={[styles.pillDot, { backgroundColor: m.fg }]} />
+      <m.Icon size={13} color={m.fg} strokeWidth={2.5} />
       <Text style={[styles.pillText, { color: m.fg }]}>{m.label}</Text>
     </View>
   );
@@ -266,7 +286,10 @@ export function DistancePanel({ distance, radius: r, locating, onLocate, onSimul
   const fill = distance == null ? 0 : Math.max(0.02, 1 - Math.min(distance, span) / span);
   return (
     <Card>
-      <Text style={type.overline}>Distance to school gate</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <MapPin size={14} color={color.muted} strokeWidth={ICON_STROKE} />
+        <Text style={type.overline}>Distance to school gate</Text>
+      </View>
       {distance == null ? (
         <Text style={[type.title, { color: color.faint, marginTop: space.sm }]}>Not located yet</Text>
       ) : (
@@ -287,7 +310,8 @@ export function DistancePanel({ distance, radius: r, locating, onLocate, onSimul
       </View>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm, marginTop: space.lg }}>
-        <Button label={locating ? 'Locating…' : 'Update location'} variant="secondary" size="sm" onPress={onLocate} loading={locating} />
+        <Button label={locating ? 'Locating…' : 'Update location'} variant="secondary" size="sm" onPress={onLocate}
+          loading={locating} icon={LocateFixed} />
         {onSimulate ? (
           <View style={styles.simGroup}>
             <Text style={[type.small, { color: color.faint }]}>Demo:</Text>
@@ -351,7 +375,8 @@ export function CampusPicker({ value, onChange }: { value: BranchOption | null; 
 
   return (
     <View style={{ gap: space.sm }}>
-      <TextField label="School" placeholder="Search by school or campus name" value={query} onChangeText={setQuery} />
+      <TextField label="School" placeholder="Search by school or campus name" value={query} onChangeText={setQuery}
+        leading={Search} />
       <ScrollView style={styles.listBox} nestedScrollEnabled keyboardShouldPersistTaps="handled">
         {state === 'loading' && results.length === 0 ? (
           <View style={{ padding: space.lg }}><ActivityIndicator color={color.accent} /></View>
@@ -367,6 +392,7 @@ export function CampusPicker({ value, onChange }: { value: BranchOption | null; 
               <Text style={type.small} numberOfLines={1}>{r.branch_name}</Text>
             </View>
             {r.status === 'paused' ? <Text style={[type.small, { color: color.warn, fontWeight: '600' }]}>Paused</Text> : null}
+            <ChevronRight size={18} color={color.faint} strokeWidth={ICON_STROKE} />
           </Pressable>
         ))}
       </ScrollView>
@@ -389,8 +415,10 @@ export function AuthLayout({ title, subtitle, onBack, footer, children }: {
       keyboardShouldPersistTaps="handled"
     >
       <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: space.xl }}>
-        <Pressable onPress={onBack} hitSlop={8} accessibilityRole="link" style={{ alignSelf: 'flex-start' }}>
-          <Text style={[type.small, { color: color.accent, fontWeight: '600' }]}>‹ Back</Text>
+        <Pressable onPress={onBack} hitSlop={8} accessibilityRole="link"
+          style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: -4 }}>
+          <ChevronLeft size={18} color={color.accent} strokeWidth={ICON_STROKE} />
+          <Text style={[type.small, { color: color.accent, fontWeight: '600' }]}>Back</Text>
         </Pressable>
         <View style={{ gap: space.sm }}>
           <Mark size={36} />
@@ -410,7 +438,7 @@ export function PausedNotice({ branch, onExit }: { branch: BranchInfo | null; on
     <View style={[styles.page, { justifyContent: 'center', padding: space.lg }]}>
       <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: space.lg }}>
         <View style={styles.pauseGlyph}>
-          <View style={styles.pauseBar} /><View style={styles.pauseBar} />
+          <Pause size={22} color={color.warn} fill={color.warn} strokeWidth={ICON_STROKE} />
         </View>
         <View style={{ gap: space.sm }}>
           <Text style={type.title}>{branch ? 'This campus is paused' : 'Couldn’t open your campus'}</Text>
@@ -435,7 +463,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: color.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: color.border },
   sectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: space.xl, marginBottom: space.sm, paddingHorizontal: 2 },
 
-  button: { borderRadius: radius.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
+  button: { borderRadius: radius.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: space.sm },
   buttonText: { fontWeight: '600' },
 
   inputWrap: {
@@ -446,10 +474,9 @@ const styles = StyleSheet.create({
   input: { flex: 1, minWidth: 0, paddingHorizontal: space.md, paddingVertical: 11, fontSize: 15, color: color.ink },
   inputAction: { paddingHorizontal: space.md, height: '100%', justifyContent: 'center' },
 
-  notice: { borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md - 2, gap: 2 },
+  notice: { flexDirection: 'row', alignItems: 'flex-start', borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md - 2, gap: space.sm },
 
-  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
-  pillDot: { width: 6, height: 6, borderRadius: 3 },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
   pillText: { fontSize: 12, fontWeight: '600' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
@@ -472,6 +499,5 @@ const styles = StyleSheet.create({
   listItem: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.md, paddingVertical: space.md - 2 },
   listItemDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border },
 
-  pauseGlyph: { width: 48, height: 48, borderRadius: radius.lg, backgroundColor: color.warnSoft, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  pauseBar: { width: 5, height: 18, borderRadius: 2, backgroundColor: color.warn },
+  pauseGlyph: { width: 48, height: 48, borderRadius: radius.lg, backgroundColor: color.warnSoft, alignItems: 'center', justifyContent: 'center' },
 });

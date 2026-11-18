@@ -15,9 +15,10 @@ export type DriverSession = {
   branchId: string;
   branchName: string;
   schoolName: string;
+  token: string;
 };
 
-const DRIVER_KEY = 'driverSession_v2';
+const DRIVER_KEY = 'driverSession_v3';
 
 export function setDriverSession(s: DriverSession | null) {
   saveSession(DRIVER_KEY, s);
@@ -25,7 +26,7 @@ export function setDriverSession(s: DriverSession | null) {
 
 export function getDriverSession(): DriverSession | null {
   const s = loadSession<DriverSession>(DRIVER_KEY);
-  return s && s.branchId ? s : null;
+  return s && s.branchId && s.token ? s : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ export default function DriverLogin() {
         vehicleNumber: data.vehicle_number,
         linkedParentIds: data.linked_parent_ids || [],
         branchId: data.branch_id,
+        token: data.token,
         branchName: branch.branch_name,
         schoolName: branch.school_name,
       });

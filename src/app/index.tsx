@@ -1,25 +1,29 @@
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mark, color, radius, space, type } from '../lib/ui';
+import { Bus, ChevronRight, School, Users } from 'lucide-react-native';
+import { ICON_STROKE, LucideIcon, Mark, color, radius, space, type } from '../lib/ui';
 
-const PORTALS = [
+const PORTALS: { href: string; title: string; body: string; Icon: LucideIcon }[] = [
   {
     href: '/parent-login',
     title: 'Parents',
     body: 'Check in when you reach the school and confirm pickup.',
+    Icon: Users,
   },
   {
     href: '/driver-login',
     title: 'Drivers and transporters',
     body: 'Vans, rickshaws and carpools collecting several children.',
+    Icon: Bus,
   },
   {
     href: '/admin',
     title: 'School staff',
     body: 'Run the dismissal queue, manage students and accounts.',
+    Icon: School,
   },
-] as const;
+];
 
 export default function LandingPage() {
   const router = useRouter();
@@ -67,11 +71,14 @@ export default function LandingPage() {
                 (pressed || hovered) && { backgroundColor: color.sunken },
               ]}
             >
+              <View style={styles.portalIcon}>
+                <p.Icon size={20} color={color.accent} strokeWidth={ICON_STROKE} />
+              </View>
               <View style={{ flex: 1, gap: 2 }}>
                 <Text style={type.heading}>{p.title}</Text>
                 <Text style={type.small}>{p.body}</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <ChevronRight size={20} color={color.faint} strokeWidth={ICON_STROKE} />
             </Pressable>
           ))}
         </View>
@@ -100,6 +107,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg, paddingVertical: space.lg,
   },
   portalDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.borderStrong },
-  chevron: { fontSize: 26, lineHeight: 26, color: color.faint, fontWeight: '300' },
+  portalIcon: {
+    width: 40, height: 40, borderRadius: radius.md, backgroundColor: color.accentSoft,
+    alignItems: 'center', justifyContent: 'center',
+  },
   footer: { textAlign: 'center', marginTop: space.xl, maxWidth: 480, alignSelf: 'center' },
 });

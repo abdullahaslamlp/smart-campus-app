@@ -13,9 +13,10 @@ export type ParentSession = {
   branchId: string;
   branchName: string;
   schoolName: string;
+  token: string;
 };
 
-const PARENT_KEY = 'parentSession_v2';
+const PARENT_KEY = 'parentSession_v3';
 
 export function setParentSession(s: ParentSession | null) {
   saveSession(PARENT_KEY, s);
@@ -23,7 +24,7 @@ export function setParentSession(s: ParentSession | null) {
 
 export function getParentSession(): ParentSession | null {
   const s = loadSession<ParentSession>(PARENT_KEY);
-  return s && s.branchId ? s : null;
+  return s && s.branchId && s.token ? s : null;
 }
 
 // Pre-select a campus from ?branch=CODE, falling back to the last one used on this device.
@@ -84,7 +85,7 @@ export default function ParentLogin() {
       // ── Success: store session and navigate ──
       rememberBranch(branch);
       setParentSession({
-        parentId: data.parent_id, fullName: data.full_name, branchId: data.branch_id,
+        parentId: data.parent_id, fullName: data.full_name, branchId: data.branch_id, token: data.token,
         branchName: branch.branch_name, schoolName: branch.school_name,
       });
       router.replace('/parent-app');

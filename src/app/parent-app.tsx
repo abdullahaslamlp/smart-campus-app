@@ -4,7 +4,7 @@ import { Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getParentSession, setParentSession } from './parent-login';
-import { useBranch } from '../lib/tenant';
+import { isSessionError, rpcMessage, useBranch, useBranchPings } from '../lib/tenant';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
   StudentRow, color, space, type,
@@ -31,6 +31,7 @@ export default function ParentApp() {
   const [currentParentId, setCurrentParentId] = useState(session?.parentId ?? '');
   const [currentFullName, setCurrentFullName] = useState(session?.fullName ?? '');
   const branchId = session?.branchId ?? '';
+  const token = session?.token ?? '';
   const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
 
   // ── Data state ──
@@ -73,18 +74,21 @@ export default function ParentApp() {
     currentParentIdRef.current = s.parentId;
     fetchData(s.parentId);
 
-    const sub = supabase
-      .channel('parent_students_' + s.branchId + '_' + s.parentId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `branch_id=eq.${s.branchId}` }, () => {
-        fetchData(s.parentId);
-      })
-      .subscribe();
-
     return () => {
-      supabase.removeChannel(sub);
       stopAutoPoll();
     };
   }, []);
+
+  // ── Live updates: the campus broadcasts a contentless ping on every change ──
+  useBranchPings(branchId, what => {
+    if (what === 'students') fetchData(currentParentIdRef.current);
+  });
+
+  // A session the server no longer accepts (expired, account deactivated) signs the parent out.
+  const handleRpcError = (e: any, prefix: string) => {
+    if (isSessionError(e)) { handleLogout(); return; }
+    setNotice(`${prefix}: ${rpcMessage(e)}`);
+  };
 
   // ── Start / stop auto-poll based on dispatched state ──
   useEffect(() => {
@@ -124,23 +128,21 @@ export default function ParentApp() {
       const rounded = Math.round(dist);
       // If parent has driven outside the geofence → kids have boarded, auto-mark received
       if (rounded > geofenceRadiusRef.current) {
-        await markKidsReceived(currentParentIdRef.current);
+        await markKidsReceived();
       }
     } catch (e: any) {
-      console.warn('[AutoPoll] Location check failed:', e.message);
+      if (isSessionError(e)) handleLogout();
+      else console.warn('[AutoPoll] Location check failed:', e.message);
     }
   };
 
-  const fetchData = async (pid: string) => {
+  const fetchData = async (_pid?: string) => {
     setLoadingStudents(true);
     try {
-      const { data, error } = await supabase
-        .from('students')
-        .select('*')
-        .eq('branch_id', branchId)
-        .eq('parent_id', pid);
+      const { data: state, error } = await supabase.rpc('parent_state', { p_token: token });
       if (error) throw error;
-      setStudents(data || []);
+      const data: any[] = state?.students ?? [];
+      setStudents(data);
       // Sync status flags from DB — resets when admin clears status
       const dispatched = (data || []).some((s: any) => s.status === 'dispatched');
       const received = (data || []).some((s: any) => s.status === 'received');
@@ -150,7 +152,8 @@ export default function ParentApp() {
       const distRow = (data || []).find((s: any) => s.last_distance_meters != null);
       setDistance(distRow ? distRow.last_distance_meters : null);
     } catch (e: any) {
-      console.error('[fetchData]', e.message);
+      if (isSessionError(e)) handleLogout();
+      else console.error('[fetchData]', e.message);
     } finally {
       setLoadingStudents(false);
     }
@@ -174,13 +177,11 @@ export default function ParentApp() {
   const updateDistance = async (newDist: number) => {
     setDistance(newDist);
     try {
-      await supabase
-        .from('students')
-        .update({ last_distance_meters: newDist })
-        .eq('branch_id', branchId)
-        .eq('parent_id', currentParentId);
+      const { error } = await supabase.rpc('parent_set_distance', { p_token: token, p_meters: newDist });
+      if (error) throw error;
     } catch (e: any) {
-      console.error('[updateDistance]', e.message);
+      if (isSessionError(e)) handleLogout();
+      else console.error('[updateDistance]', e.message);
     }
   };
 
@@ -213,43 +214,33 @@ export default function ParentApp() {
     setNotice(null);
     setCheckingIn(true);
     try {
-      const { error } = await supabase
-        .from('students')
-        .update({ status: 'dispatched' })
-        .eq('branch_id', branchId)
-        .eq('parent_id', currentParentId);
+      // Server re-checks the campus status and the geofence radius.
+      const { error } = await supabase.rpc('parent_check_in', { p_token: token, p_meters: distance });
       if (error) throw error;
       setIsCheckedIn(true);
+      fetchData();
     } catch (e: any) {
-      setNotice(`Check-in didn’t go through: ${e.message}`);
+      handleRpcError(e, 'Check-in didn’t go through');
     } finally {
       setCheckingIn(false);
     }
   };
 
   // ─── Kids Arrived (kids boarded, parent leaving school) ───────────────────
-  const markKidsReceived = async (pid: string) => {
-    try {
-      const { error } = await supabase
-        .from('students')
-        .update({ status: 'received' })
-        .eq('branch_id', branchId)
-        .eq('parent_id', pid)
-        .eq('status', 'dispatched');
-      if (error) throw error;
-      setIsReceived(true);
-      stopAutoPoll();
-    } catch (e: any) {
-      console.error('[markKidsReceived]', e.message);
-    }
+  const markKidsReceived = async (_pid?: string) => {
+    const { error } = await supabase.rpc('parent_mark_received', { p_token: token });
+    if (error) throw error;
+    setIsReceived(true);
+    stopAutoPoll();
+    fetchData();
   };
 
   const handleKidsArrived = async () => {
     setKidsArrivedLoading(true);
     try {
-      await markKidsReceived(currentParentId);
+      await markKidsReceived();
     } catch (e: any) {
-      setNotice(`Couldn’t confirm pickup: ${e.message}`);
+      handleRpcError(e, 'Couldn’t confirm pickup');
     } finally {
       setKidsArrivedLoading(false);
     }
@@ -258,6 +249,7 @@ export default function ParentApp() {
   // ─── Logout ───────────────────────────────────────────────────────────────
   const handleLogout = () => {
     stopAutoPoll();
+    if (token) supabase.rpc('app_logout', { p_token: token }).then(() => {}, () => {});
     setParentSession(null);
     router.replace('/');
   };

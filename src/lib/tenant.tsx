@@ -1,5 +1,5 @@
 // Shared multi-tenant helpers: session storage, branch search, live branch status, paused screen.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../../supabase';
 
@@ -92,6 +92,57 @@ export async function fetchBranch(branchId: string): Promise<BranchInfo | null> 
 // in the Super Admin portal blocks an already-open app immediately.
 const BRANCH_POLL_MS = 15000;
 
+// ─── Change pings ────────────────────────────────────────────────────────────
+// Database triggers broadcast an empty 'changed' event on topic 'branch:<id>'
+// (payload: { what: <table name> }). No row data is sent; clients refetch
+// through the token-checked RPCs. Returns an unsubscribe function.
+export function subscribeBranchPings(branchId: string, onPing: (what: string) => void): () => void {
+  const ch = supabase
+    .channel('branch:' + branchId)
+    .on('broadcast', { event: 'changed' }, msg => onPing(String(msg.payload?.what ?? '')))
+    .subscribe();
+  return () => { supabase.removeChannel(ch); };
+}
+
+// Subscribe for the lifetime of a component; the latest callback is always used.
+export function useBranchPings(branchId: string | null | undefined, onPing: (what: string) => void) {
+  const ref = useRef(onPing);
+  ref.current = onPing;
+  useEffect(() => {
+    if (!branchId) return;
+    return subscribeBranchPings(branchId, what => ref.current(what));
+  }, [branchId]);
+}
+
+// ─── RPC errors ──────────────────────────────────────────────────────────────
+export const RPC_ERRORS: Record<string, string> = {
+  session_expired: 'Your session has ended. Please sign in again.',
+  inactive: 'Your account has been deactivated. Contact the school office.',
+  paused: PAUSED_MESSAGE,
+  forbidden: 'You do not have access to this campus.',
+  outside_geofence: 'You are outside the school geofence. Move closer to the gate and update your location.',
+  missing_fields: 'Please fill in all required fields.',
+  invalid_radius: 'Geofence radius must be between 50 and 500 metres.',
+  invalid_location: 'Please choose a valid location.',
+  invalid_status: 'Invalid status.',
+  not_found: 'That record no longer exists.',
+  parent_accounts_branch_parent_uniq: 'A parent account with that ID already exists at this campus.',
+  transporter_accounts_branch_driver_uniq: 'A driver account with that ID already exists at this campus.',
+};
+
+export function rpcErrorCode(e: any): string | null {
+  const msg: string = e?.message || String(e ?? '');
+  return Object.keys(RPC_ERRORS).find(k => msg.includes(k)) ?? null;
+}
+
+export function rpcMessage(e: any): string {
+  const code = rpcErrorCode(e);
+  return code ? RPC_ERRORS[code] : (e?.message || String(e));
+}
+
+// The session is no longer usable → the screen should sign out.
+export const isSessionError = (e: any) => ['session_expired', 'inactive'].includes(rpcErrorCode(e) ?? '');
+
 export function useBranch(branchId: string | null | undefined) {
   const [branch, setBranch] = useState<BranchInfo | null>(null);
   const [loading, setLoading] = useState(!!branchId);
@@ -111,16 +162,14 @@ export function useBranch(branchId: string | null | undefined) {
     };
     load();
 
-    const ch = supabase
-      .channel('branch_status_' + branchId + '_' + Date.now())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'branches', filter: `id=eq.${branchId}` }, load)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'schools' }, load)
-      .subscribe();
+    const unsubscribe = subscribeBranchPings(branchId, what => {
+      if (what === 'branches' || what === 'schools') load();
+    });
 
-    // Fallback: Realtime delivery is not guaranteed, so re-check status periodically.
+    // Fallback: broadcast delivery is not guaranteed, so re-check status periodically.
     const poll = setInterval(load, BRANCH_POLL_MS);
 
-    return () => { cancelled = true; clearInterval(poll); supabase.removeChannel(ch); };
+    return () => { cancelled = true; clearInterval(poll); unsubscribe(); };
   }, [branchId]);
 
   const live = !!branch && branch.status === 'active';
