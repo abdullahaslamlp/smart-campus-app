@@ -6,6 +6,23 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { supabase } from '../../supabase';
+import { LOGIN_ERRORS, PausedScreen, loadSession, saveSession, useBranch } from '../lib/tenant';
+
+// ─── Admin session ────────────────────────────────────────────────────────────
+export interface AdminBranch {
+  branch_id: string; branch_code: string; branch_name: string;
+  school_id: string; school_name: string; status: 'active' | 'paused' | 'archived';
+}
+export interface AdminSession {
+  adminId: string; username: string; fullName: string | null;
+  role: 'owner' | 'super' | 'branch';
+  branches: AdminBranch[];
+  branchId: string | null;   // branch currently being managed
+  token?: string;            // admin session token (Step 4+)
+}
+const ADMIN_KEY = 'adminSession_v1';
+export const getAdminSession = () => loadSession<AdminSession>(ADMIN_KEY);
+export const setAdminSession = (s: AdminSession | null) => saveSession(ADMIN_KEY, s);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type NavSection = 'dashboard' | 'students' | 'guardians' | 'geofence' | 'logs' | 'accounts' | 'transporters' | 'tests';
@@ -35,7 +52,6 @@ interface TransporterAccount {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const ADMIN_PIN = 'safepass2025';
 const SLATE = '#466179';
 const SLATE_DARK = '#2d3f50';
 const SLATE_LIGHT = '#b0cce8';
@@ -132,11 +148,16 @@ export default function AdminPortal() {
   const { width: windowWidth } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || windowWidth < 768;
 
-  // ── PIN gate ──
-  const [pinAuthed, setPinAuthed] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState('');
+  // ── Admin auth ──
+  const [session, setSession] = useState<AdminSession | null>(() => getAdminSession());
+  const [loginUser, setLoginUser] = useState('');
+  const [loginPw, setLoginPw] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
   const [showPin, setShowPin] = useState(false);
+  const branchId = session?.branchId ?? null;
+  const pinAuthed = !!branchId;
+  const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
 
   // ── App state ──
   const [students, setStudents] = useState<Student[]>([]);
@@ -202,14 +223,64 @@ export default function AdminPortal() {
   const [showTransporterModalPw, setShowTransporterModalPw] = useState(false);
 
   // ─── PIN Login ─────────────────────────────────────────────────────────────
-  const handlePinLogin = () => {
-    if (pinInput.trim() === ADMIN_PIN) {
-      setPinAuthed(true);
-      // Data loading is handled by the useEffect below
-    } else {
-      setPinError('Incorrect PIN. Please try again.');
-      setPinInput('');
+  const updateSession = (next: AdminSession | null) => {
+    setAdminSession(next);
+    setSession(next);
+  };
+
+  const handlePinLogin = async () => {
+    if (!loginUser.trim() || !loginPw) {
+      setLoginError('Please enter your username and password.');
+      return;
     }
+    setLoginError('');
+    setLoginLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('login_admin', { p_username: loginUser, p_password: loginPw });
+      if (error) { setLoginError('Connection error. Please try again.'); console.error('[adminLogin]', error.message); return; }
+      if (!data?.ok) {
+        setLoginError(data?.error === 'no_branch'
+          ? 'No campus is assigned to this admin account.'
+          : LOGIN_ERRORS[data?.error] ?? 'Login failed. Please try again.');
+        return;
+      }
+      const branches: AdminBranch[] = data.branches || [];
+      // Branch admins go straight to their (first live) campus; others pick when there is more than one.
+      const firstLive = branches.find(b => b.status === 'active') ?? branches[0];
+      const autoPick = branches.length === 1 || data.role === 'branch' ? firstLive?.branch_id ?? null : null;
+      updateSession({
+        adminId: data.admin_id, username: data.username, fullName: data.full_name,
+        role: data.role, branches, branchId: autoPick, token: data.token,
+      });
+      setLoginPw('');
+    } catch (e: any) {
+      setLoginError('An unexpected error occurred.');
+      console.error('[adminLogin]', e.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const selectBranch = (id: string | null) => {
+    if (!session) return;
+    setStudentsLoading(true); setAccountsLoading(true); setTransportersLoading(true);
+    setStudents([]); setAccounts([]); setTransporters([]);
+    updateSession({ ...session, branchId: id });
+  };
+
+  const handleLogout = () => {
+    // A super admin who opened this campus from /super-admin keeps their platform session.
+    const fromSuper = session && session.role !== 'branch' && session.branches.length === 1 && !!loadSession('superSession_v1');
+    if (session?.token && !fromSuper) supabase.rpc('admin_logout', { p_token: session.token }).then(() => {}, () => {});
+    updateSession(null);
+    setLoginUser(''); setLoginPw('');
+    if (fromSuper) { router.replace('/super-admin'); return; }
+  };
+
+  // Owners / super admins: leave this campus and return to the platform portal (their platform session is kept).
+  const backToSuperAdmin = () => {
+    updateSession(null);
+    router.replace('/super-admin');
   };
 
   // ─── Data Init via useEffect (runs once when PIN is accepted, cleans up on unmount) ─
@@ -219,30 +290,20 @@ export default function AdminPortal() {
     fetchStudents();
     fetchAccounts();
     fetchTransporters();
-    fetchSettings();
+    const bf = `branch_id=eq.${branchId}`;
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
 
     const studentSub = supabase.channel('admin_students_' + Date.now())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, fetchStudents)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: bf }, fetchStudents)
       .subscribe();
 
     const accountSub = supabase.channel('admin_accounts_' + Date.now())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'parent_accounts' }, fetchAccounts)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parent_accounts', filter: bf }, fetchAccounts)
       .subscribe();
 
     const transporterSub = supabase.channel('admin_transporters_' + Date.now())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transporter_accounts' }, fetchTransporters)
-      .subscribe();
-
-    const settingsSub = supabase.channel('admin_settings_' + Date.now())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'school_settings' }, (p) => {
-        const row = p.new as any;
-        if (!row?.lat) return;
-        setSchoolLocation({ lat: row.lat, lng: row.lng });
-        setTempLocation({ lat: row.lat, lng: row.lng });
-        if (row.geofence_radius) { setGeofenceRadius(row.geofence_radius); setTempRadius(row.geofence_radius); }
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transporter_accounts', filter: bf }, fetchTransporters)
       .subscribe();
 
     const handleMapMessage = (e: MessageEvent) => {
@@ -256,10 +317,9 @@ export default function AdminPortal() {
       supabase.removeChannel(studentSub);
       supabase.removeChannel(accountSub);
       supabase.removeChannel(transporterSub);
-      supabase.removeChannel(settingsSub);
       if (Platform.OS === 'web') window.removeEventListener('message', handleMapMessage);
     };
-  }, [pinAuthed]);
+  }, [branchId]);
 
   // Re-fetch whenever switching to a data-heavy tab so stale-closure inserts are always visible
   useEffect(() => {
@@ -267,11 +327,11 @@ export default function AdminPortal() {
     if (activeNav === 'accounts') fetchAccounts();
     if (activeNav === 'transporters') fetchTransporters();
     if (activeNav === 'students' || activeNav === 'guardians' || activeNav === 'dashboard' || activeNav === 'logs') fetchStudents();
-  }, [activeNav, pinAuthed]);
+  }, [activeNav, branchId]);
 
   const fetchStudents = async () => {
     try {
-      const { data, error } = await supabase.from('students').select('*').order('status');
+      const { data, error } = await supabase.from('students').select('*').eq('branch_id', branchId).order('status');
       if (error) throw error;
       setStudents((data as Student[]) || []);
     } catch (e: any) { console.error('[fetchStudents]', e.message); }
@@ -280,7 +340,7 @@ export default function AdminPortal() {
 
   const fetchAccounts = async () => {
     try {
-      const { data, error } = await supabase.from('parent_accounts').select('*').order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('parent_accounts').select('*').eq('branch_id', branchId).order('created_at', { ascending: false });
       if (error) throw error;
       setAccounts((data as ParentAccount[]) || []);
     } catch (e: any) { console.error('[fetchAccounts]', e.message); }
@@ -289,7 +349,7 @@ export default function AdminPortal() {
 
   const fetchTransporters = async () => {
     try {
-      const { data, error } = await supabase.from('transporter_accounts').select('*').order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('transporter_accounts').select('*').eq('branch_id', branchId).order('created_at', { ascending: false });
       if (error) throw error;
       setTransporters((data as TransporterAccount[]) || []);
     } catch (e: any) { console.error('[fetchTransporters]', e.message); }
@@ -338,7 +398,7 @@ export default function AdminPortal() {
           password: nt_password.trim() || 'safepass123',
           phone: nt_phone.trim() || null,
           linked_parent_ids: nt_linkedParents,
-        }).eq('id', editTransporter.id);
+        }).eq('id', editTransporter.id).eq('branch_id', branchId);
         if (error) throw error;
       } else {
         const { error } = await supabase.from('transporter_accounts').insert({
@@ -350,6 +410,7 @@ export default function AdminPortal() {
           phone: nt_phone.trim() || null,
           linked_parent_ids: nt_linkedParents,
           is_active: true,
+          branch_id: branchId,
         });
         if (error) throw error;
       }
@@ -362,7 +423,7 @@ export default function AdminPortal() {
 
   const handleToggleTransporterActive = async (tr: TransporterAccount) => {
     try {
-      await supabase.from('transporter_accounts').update({ is_active: !tr.is_active }).eq('id', tr.id);
+      await supabase.from('transporter_accounts').update({ is_active: !tr.is_active }).eq('id', tr.id).eq('branch_id', branchId);
       fetchTransporters();
     } catch (e: any) { console.error('[toggleTransporterActive]', e.message); }
   };
@@ -371,32 +432,31 @@ export default function AdminPortal() {
     const confirmDelete = Platform.OS === 'web' ? confirm(`Delete driver "${tr.driver_name}" (${tr.driver_id})?`) : true;
     if (confirmDelete) {
       try {
-        await supabase.from('transporter_accounts').delete().eq('id', tr.id);
+        await supabase.from('transporter_accounts').delete().eq('id', tr.id).eq('branch_id', branchId);
         fetchTransporters();
       } catch (e: any) { console.error('[deleteTransporter]', e.message); }
     }
   };
 
-  const fetchSettings = async () => {
-    try {
-      const { data } = await supabase.from('school_settings').select('*').eq('id', 'primary').single();
-      if (data) {
-        setSchoolLocation({ lat: data.lat, lng: data.lng });
-        setTempLocation({ lat: data.lat, lng: data.lng });
-        if (data.geofence_radius) { setGeofenceRadius(data.geofence_radius); setTempRadius(data.geofence_radius); }
-      }
-    } catch (e: any) { console.error('[fetchSettings]', e.message); }
-  };
+  // ── Geofence settings come from the managed branch (refreshes live / every 15s) ──
+  useEffect(() => {
+    if (!branch) return;
+    setSchoolLocation({ lat: branch.lat, lng: branch.lng });
+    if (!isMapOpen) setTempLocation({ lat: branch.lat, lng: branch.lng });
+    setGeofenceRadius(branch.geofence_radius);
+    if (!radiusSaved) setTempRadius(branch.geofence_radius);
+  }, [branch?.id, branch?.lat, branch?.lng, branch?.geofence_radius]);
 
   // ─── Admin Handlers ───────────────────────────────────────────────────────
   const handleResetDemo = async () => {
     setResetLoading(true);
     try {
-      const { data: all, error: fe } = await supabase.from('students').select('id');
+      const { data: all, error: fe } = await supabase.from('students').select('id').eq('branch_id', branchId);
       if (fe) throw fe;
       if (!all?.length) return;
       const { error: ue } = await supabase.from('students')
         .update({ status: 'waiting', last_distance_meters: null })
+        .eq('branch_id', branchId)
         .in('id', all.map((r: any) => r.id));
       if (ue) throw ue;
     } catch (e: any) { Alert.alert('Reset failed', e.message); }
@@ -404,19 +464,19 @@ export default function AdminPortal() {
   };
 
   const handleDispatch = async (id: string) => {
-    const { error } = await supabase.from('students').update({ status: 'dispatched' }).eq('id', id);
+    const { error } = await supabase.from('students').update({ status: 'dispatched' }).eq('id', id).eq('branch_id', branchId);
     if (error) Alert.alert('Error', error.message);
   };
 
   const saveMapLocation = async () => {
-    const { error } = await supabase.from('school_settings').upsert({ id: 'primary', lat: tempLocation.lat, lng: tempLocation.lng });
+    const { error } = await supabase.from('branches').update({ lat: tempLocation.lat, lng: tempLocation.lng }).eq('id', branchId);
     if (error) { Alert.alert('Error', error.message); return; }
     setSchoolLocation(tempLocation);
     setIsMapOpen(false);
   };
 
   const saveGeofenceRadius = async () => {
-    const { error } = await supabase.from('school_settings').upsert({ id: 'primary', lat: schoolLocation.lat, lng: schoolLocation.lng, geofence_radius: tempRadius });
+    const { error } = await supabase.from('branches').update({ geofence_radius: tempRadius }).eq('id', branchId);
     if (error) { Alert.alert('Error', error.message); return; }
     setGeofenceRadius(tempRadius);
     setRadiusSaved(true);
@@ -434,6 +494,7 @@ export default function AdminPortal() {
         name: ns_name.trim(), grade: ns_grade.trim() || null,
         gate: ns_gate, parent_id: ns_parentId.trim().toLowerCase(),
         status: 'waiting', last_distance_meters: null,
+        branch_id: branchId,
       });
       if (error) throw error;
       setAddStudentOpen(false); setNs_name(''); setNs_grade(''); setNs_parentId('');
@@ -468,7 +529,7 @@ export default function AdminPortal() {
       if (editAccount) {
         const { error } = await supabase.from('parent_accounts')
           .update({ full_name: na_fullName.trim(), password: na_password.trim(), phone: na_phone.trim() || null })
-          .eq('id', editAccount.id);
+          .eq('id', editAccount.id).eq('branch_id', branchId);
         if (error) throw error;
       } else {
         const trimId = na_parentId.trim().toLowerCase();
@@ -478,6 +539,7 @@ export default function AdminPortal() {
           password: na_password.trim(),
           phone: na_phone.trim() || null,
           is_active: true,
+          branch_id: branchId,
         });
         if (error) throw error;
       }
@@ -486,7 +548,7 @@ export default function AdminPortal() {
       // Show error inside the modal so it's never missed
       const msg: string = e.message || String(e);
       if (msg.includes('duplicate') || msg.includes('unique')) {
-        setAccountModalError(`A parent account with ID "${na_parentId.trim()}" already exists. Use a different ID or edit the existing account.`);
+        setAccountModalError(`A parent account with ID "${na_parentId.trim()}" already exists at this campus. Use a different ID or edit the existing account.`);
       } else if (msg.includes('does not exist') || msg.includes('relation')) {
         setAccountModalError('The parent_accounts table is missing. Please run the SQL migration in Supabase first.');
       } else {
@@ -499,7 +561,7 @@ export default function AdminPortal() {
 
   const handleToggleActive = async (acc: ParentAccount) => {
     const { error } = await supabase.from('parent_accounts')
-      .update({ is_active: !acc.is_active }).eq('id', acc.id);
+      .update({ is_active: !acc.is_active }).eq('id', acc.id).eq('branch_id', branchId);
     if (error) Alert.alert('Error', error.message);
   };
 
@@ -512,7 +574,7 @@ export default function AdminPortal() {
         {
           text: 'Delete', style: 'destructive',
           onPress: async () => {
-            const { error } = await supabase.from('parent_accounts').delete().eq('id', acc.id);
+            const { error } = await supabase.from('parent_accounts').delete().eq('id', acc.id).eq('branch_id', branchId);
             if (error) Alert.alert('Error', error.message);
           },
         },
@@ -528,8 +590,9 @@ export default function AdminPortal() {
     return { bg: '#e2e2e4', text: '#43474d' };
   };
 
-  // ─── PIN Gate ─────────────────────────────────────────────────────────────
-  if (!pinAuthed) {
+  // ─── Login Gate ───────────────────────────────────────────────────────────
+  if (!session) {
+    const webInput = (extra: any) => ({ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box', ...extra } as any);
     return (
       <View style={s.pinRoot}>
         <View style={s.pinCard}>
@@ -537,27 +600,40 @@ export default function AdminPortal() {
             <Text style={{ fontSize: 36 }}>🛡️</Text>
           </View>
           <Text style={s.pinTitle}>Admin Portal</Text>
-          <Text style={s.pinSub}>Enter your admin PIN to continue</Text>
+          <Text style={s.pinSub}>Sign in with your campus admin account</Text>
 
-          {pinError ? <View style={s.errorBanner}><Text style={s.errorText}>⚠️ {pinError}</Text></View> : null}
+          {loginError ? <View style={s.errorBanner}><Text style={s.errorText}>⚠️ {loginError}</Text></View> : null}
 
           <View style={{ gap: 4, alignSelf: 'stretch' }}>
-            <Text style={s.formLabel}>Admin PIN</Text>
+            <Text style={s.formLabel}>Username</Text>
+            {Platform.OS === 'web' ? (
+              // @ts-ignore
+              <input style={webInput({})} placeholder="e.g. branch1_admin" value={loginUser}
+                autoComplete="username" onChange={(e: any) => setLoginUser(e.target.value)} />
+            ) : (
+              <TextInput style={s.formInput} placeholder="e.g. branch1_admin" value={loginUser}
+                onChangeText={setLoginUser} autoCapitalize="none" placeholderTextColor={MUTED} />
+            )}
+          </View>
+
+          <View style={{ gap: 4, alignSelf: 'stretch' }}>
+            <Text style={s.formLabel}>Password</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               {Platform.OS === 'web' ? (
                 // @ts-ignore
                 <input
-                  style={{ ...s.formInputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
+                  style={webInput({ flex: 1 })}
                   type={showPin ? 'text' : 'password'}
-                  placeholder="Enter PIN"
-                  value={pinInput}
-                  onChange={(e: any) => setPinInput(e.target.value)}
+                  placeholder="Enter password"
+                  value={loginPw}
+                  autoComplete="current-password"
+                  onChange={(e: any) => setLoginPw(e.target.value)}
                   onKeyDown={(e: any) => e.key === 'Enter' && handlePinLogin()}
                 />
               ) : (
                 <TextInput style={[s.formInput, { flex: 1 }]}
-                  placeholder="Enter PIN" value={pinInput}
-                  onChangeText={setPinInput} secureTextEntry={!showPin}
+                  placeholder="Enter password" value={loginPw}
+                  onChangeText={setLoginPw} secureTextEntry={!showPin}
                   placeholderTextColor={MUTED} />
               )}
               <Pressable style={s.eyeBtn} onPress={() => setShowPin(p => !p)}>
@@ -566,8 +642,10 @@ export default function AdminPortal() {
             </View>
           </View>
 
-          <Pressable style={s.pinBtn} onPress={handlePinLogin}>
-            <Text style={s.pinBtnText}>Enter Portal →</Text>
+          <Pressable style={s.pinBtn} onPress={handlePinLogin} disabled={loginLoading}>
+            {loginLoading
+              ? <ActivityIndicator color={WHITE} />
+              : <Text style={s.pinBtnText}>Sign In →</Text>}
           </Pressable>
 
           <Pressable onPress={() => router.replace('/')}>
@@ -576,6 +654,48 @@ export default function AdminPortal() {
         </View>
       </View>
     );
+  }
+
+  // ─── Campus chooser (admins with access to several campuses) ─────────────
+  if (!branchId) {
+    return (
+      <View style={s.pinRoot}>
+        <View style={[s.pinCard, { maxWidth: 520 }]}>
+          <Text style={s.pinTitle}>Choose a Campus</Text>
+          <Text style={s.pinSub}>Signed in as {session.fullName || session.username}</Text>
+          {session.branches.length === 0 ? (
+            <Text style={s.pinSub}>No campuses are assigned to this account yet.</Text>
+          ) : (
+            <View style={{ alignSelf: 'stretch', gap: 8 }}>
+              {session.branches.map(b => (
+                <Pressable key={b.branch_id} style={s.campusRow} onPress={() => selectBranch(b.branch_id)}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.campusSchool}>{b.school_name}</Text>
+                    <Text style={s.campusBranch}>{b.branch_name} · {b.branch_code}</Text>
+                  </View>
+                  {b.status !== 'active' ? <Text style={s.campusPaused}>{b.status.toUpperCase()}</Text> : null}
+                  <Text style={{ color: SLATE, fontWeight: '700' }}>→</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <Pressable onPress={handleLogout}>
+            <Text style={s.backLink}>Sign out</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  if (branchLoading) {
+    return (
+      <View style={s.pinRoot}><ActivityIndicator color={SLATE} size="large" /></View>
+    );
+  }
+
+  // Branch admins are locked out of a paused campus; owners / super admins can still manage it.
+  if (session.role === 'branch' && !branchLive) {
+    return <PausedScreen branch={branch} onExit={handleLogout} />;
   }
 
   // ─── ADMIN PORTAL ─────────────────────────────────────────────────────────
@@ -1150,40 +1270,41 @@ export default function AdminPortal() {
     });
 
     await run('wb-02', 'Whitebox — DB', 'students table readable', async () => {
-      const { data, error } = await supabase.from('students').select('id').limit(1);
+      const { data, error } = await supabase.from('students').select('id').eq('branch_id', branchId).limit(1);
       if (error) return { status: 'fail', detail: error.message };
       return { status: 'pass', detail: `SELECT succeeded — row count probe ok` };
     });
 
     await run('wb-03', 'Whitebox — DB', 'parent_accounts table readable', async () => {
-      const { data, error } = await supabase.from('parent_accounts').select('id').limit(1);
+      const { data, error } = await supabase.from('parent_accounts').select('id').eq('branch_id', branchId).limit(1);
       if (error) return { status: 'fail', detail: `RLS or table missing: ${error.message}` };
       return { status: 'pass', detail: 'SELECT on parent_accounts succeeded' };
     });
 
-    await run('wb-04', 'Whitebox — DB', 'school_settings table readable', async () => {
-      const { data, error } = await supabase.from('school_settings').select('*').eq('id', 'primary').single();
-      if (error && error.code !== 'PGRST116') return { status: 'fail', detail: error.message };
-      return { status: 'pass', detail: data ? `lat=${data.lat}, lng=${data.lng}, radius=${data.geofence_radius}m` : 'No row yet (ok)' };
+    await run('wb-04', 'Whitebox — DB', 'Campus geofence settings readable', async () => {
+      const { data, error } = await supabase.rpc('get_branch', { p_branch_id: branchId });
+      if (error) return { status: 'fail', detail: error.message };
+      if (!data) return { status: 'fail', detail: 'Branch not found' };
+      return { status: 'pass', detail: `${data.school_name} — ${data.name}: lat=${data.lat}, lng=${data.lng}, radius=${data.geofence_radius}m, status=${data.status}` };
     });
 
     // ── WHITEBOX: Data Integrity ──────────────────────────────────────
     await run('wb-05', 'Whitebox — Integrity', 'All students have a name', async () => {
-      const { data, error } = await supabase.from('students').select('id,name').is('name', null);
+      const { data, error } = await supabase.from('students').select('id,name').eq('branch_id', branchId).is('name', null);
       if (error) return { status: 'fail', detail: error.message };
       if ((data || []).length > 0) return { status: 'fail', detail: `${data!.length} students with NULL name` };
       return { status: 'pass', detail: 'No null names found' };
     });
 
     await run('wb-06', 'Whitebox — Integrity', 'All students have a parent_id', async () => {
-      const { data, error } = await supabase.from('students').select('id,parent_id').is('parent_id', null);
+      const { data, error } = await supabase.from('students').select('id,parent_id').eq('branch_id', branchId).is('parent_id', null);
       if (error) return { status: 'fail', detail: error.message };
       if ((data || []).length > 0) return { status: 'fail', detail: `${data!.length} orphan students` };
       return { status: 'pass', detail: 'All students have parent_id' };
     });
 
     await run('wb-07', 'Whitebox — Integrity', 'Grade format is Grade N-X', async () => {
-      const { data, error } = await supabase.from('students').select('name,grade');
+      const { data, error } = await supabase.from('students').select('name,grade').eq('branch_id', branchId);
       if (error) return { status: 'fail', detail: error.message };
       const bad = (data || []).filter(s => s.grade && !/Grade \d+-[A-Z]/i.test(s.grade));
       if (bad.length > 0) return { status: 'warn', detail: `${bad.length} non-standard grades: ${bad.slice(0,3).map(b=>b.grade).join(', ')}` };
@@ -1191,26 +1312,26 @@ export default function AdminPortal() {
     });
 
     await run('wb-08', 'Whitebox — Integrity', 'No invalid status values', async () => {
-      const { data, error } = await supabase.from('students').select('id,status');
+      const { data, error } = await supabase.from('students').select('id,status').eq('branch_id', branchId);
       if (error) return { status: 'fail', detail: error.message };
-      const valid = ['waiting', 'dispatched', 'arrived'];
+      const valid = ['waiting', 'dispatched', 'arrived', 'received'];
       const bad = (data || []).filter(s => !valid.includes(s.status));
       if (bad.length > 0) return { status: 'fail', detail: `${bad.length} invalid status values` };
-      return { status: 'pass', detail: 'All statuses are waiting/dispatched/arrived' };
+      return { status: 'pass', detail: 'All statuses are waiting/dispatched/arrived/received' };
     });
 
     await run('wb-09', 'Whitebox — Integrity', 'All parent accounts have unique IDs', async () => {
-      const { data, error } = await supabase.from('parent_accounts').select('parent_id');
+      const { data, error } = await supabase.from('parent_accounts').select('parent_id').eq('branch_id', branchId);
       if (error) return { status: 'fail', detail: error.message };
       const ids = (data||[]).map(p => p.parent_id);
       const unique = new Set(ids);
-      if (unique.size !== ids.length) return { status: 'fail', detail: `Duplicate parent_id found!` };
-      return { status: 'pass', detail: `${ids.length} accounts, all unique` };
+      if (unique.size !== ids.length) return { status: 'fail', detail: `Duplicate parent_id found in this campus!` };
+      return { status: 'pass', detail: `${ids.length} accounts, all unique within this campus` };
     });
 
     await run('wb-10', 'Whitebox — Integrity', 'Every student parent_id has an account', async () => {
-      const { data: stData } = await supabase.from('students').select('parent_id');
-      const { data: acData } = await supabase.from('parent_accounts').select('parent_id');
+      const { data: stData } = await supabase.from('students').select('parent_id').eq('branch_id', branchId);
+      const { data: acData } = await supabase.from('parent_accounts').select('parent_id').eq('branch_id', branchId);
       const accountIds = new Set((acData||[]).map(a => a.parent_id));
       const orphans = [...new Set((stData||[]).map(s => s.parent_id))].filter(pid => !accountIds.has(pid));
       if (orphans.length > 0) return { status: 'warn', detail: `${orphans.length} parent IDs in students with no account: ${orphans.slice(0,3).join(', ')}` };
@@ -1227,7 +1348,7 @@ export default function AdminPortal() {
     });
 
     await run('gb-02', 'Greybox — Filters', 'Class filter reduces student count', async () => {
-      const { data } = await supabase.from('students').select('grade').not('grade','is',null);
+      const { data } = await supabase.from('students').select('grade').eq('branch_id', branchId).not('grade','is',null);
       const all = data || [];
       const grade1 = all.filter(s => s.grade?.startsWith('Grade 1'));
       if (grade1.length === 0) return { status: 'warn', detail: 'No Grade 1 students found to test filter' };
@@ -1236,7 +1357,7 @@ export default function AdminPortal() {
     });
 
     await run('gb-03', 'Greybox — Filters', 'Section filter further reduces class filter', async () => {
-      const { data } = await supabase.from('students').select('grade').not('grade','is',null);
+      const { data } = await supabase.from('students').select('grade').eq('branch_id', branchId).not('grade','is',null);
       const all = data || [];
       const grade2 = all.filter(s => s.grade?.match(/Grade 2-/));
       const grade2A = all.filter(s => s.grade === 'Grade 2-A');
@@ -1246,8 +1367,8 @@ export default function AdminPortal() {
     });
 
     await run('gb-04', 'Greybox — Filters', 'Search + class filter stack correctly', async () => {
-      const { data } = await supabase.from('students').select('name,grade').ilike('grade','Grade 3%');
-      const { data: search } = await supabase.from('students').select('name,grade').ilike('name','%Bilal%').ilike('grade','Grade 3%');
+      const { data } = await supabase.from('students').select('name,grade').eq('branch_id', branchId).ilike('grade','Grade 3%');
+      const { data: search } = await supabase.from('students').select('name,grade').eq('branch_id', branchId).ilike('name','%Bilal%').ilike('grade','Grade 3%');
       const g3Count = (data||[]).length;
       const stackedCount = (search||[]).length;
       if (g3Count === 0) return { status: 'warn', detail: 'No Grade 3 students to test stack filter' };
@@ -1255,50 +1376,55 @@ export default function AdminPortal() {
     });
 
     // ── BLACKBOX: Auth Flow ───────────────────────────────────────────
-    await run('bb-01', 'Blackbox — Auth', 'Valid parent credentials accepted', async () => {
-      const { data, error } = await supabase.from('parent_accounts')
-        .select('*').eq('parent_id', 'parent_005').eq('password', 'safepass123').single();
-      if (error || !data) return { status: 'fail', detail: `parent_005 / safepass123 not found: ${error?.message}` };
-      return { status: 'pass', detail: `parent_005 authenticated as "${data.full_name}"` };
+    await run('bb-01', 'Blackbox — Auth', 'Parent login rejects a wrong password', async () => {
+      const { data: acc } = await supabase.from('parent_accounts').select('parent_id').eq('branch_id', branchId).eq('is_active', true).limit(1);
+      if (!acc?.length) return { status: 'warn', detail: 'No active parent accounts in this campus to test with' };
+      const { data, error } = await supabase.rpc('login_parent', { p_branch_id: branchId, p_parent_id: acc[0].parent_id, p_password: '__definitely_wrong__' });
+      if (error) return { status: 'fail', detail: error.message };
+      if (data?.ok) return { status: 'fail', detail: 'Wrong password was accepted!' };
+      return { status: 'pass', detail: `Rejected with "${data?.error}"` };
     });
 
-    await run('bb-02', 'Blackbox — Auth', 'Wrong password rejected', async () => {
-      const { data } = await supabase.from('parent_accounts')
-        .select('*').eq('parent_id', 'parent_005').eq('password', 'wrongpass').single();
-      if (data) return { status: 'fail', detail: 'Wrong password incorrectly returned a match!' };
-      return { status: 'pass', detail: 'Wrong password returns no rows (correctly rejected)' };
+    await run('bb-02', 'Blackbox — Auth', 'Unknown parent rejected', async () => {
+      const { data, error } = await supabase.rpc('login_parent', { p_branch_id: branchId, p_parent_id: 'parent_does_not_exist', p_password: 'x' });
+      if (error) return { status: 'fail', detail: error.message };
+      if (data?.ok) return { status: 'fail', detail: 'Phantom parent was accepted!' };
+      return { status: 'pass', detail: `Rejected with "${data?.error}"` };
     });
 
-    await run('bb-03', 'Blackbox — Auth', 'Non-existent parent rejected', async () => {
-      const { data } = await supabase.from('parent_accounts')
-        .select('*').eq('parent_id', 'parent_999').single();
-      if (data) return { status: 'fail', detail: 'Phantom parent_999 returned data!' };
-      return { status: 'pass', detail: 'Non-existent parent correctly returns nothing' };
+    await run('bb-03', 'Blackbox — Auth', 'Login responses never include passwords', async () => {
+      const { data } = await supabase.rpc('login_parent', { p_branch_id: branchId, p_parent_id: 'parent_does_not_exist', p_password: 'x' });
+      const raw = JSON.stringify(data ?? {});
+      if (/password/i.test(raw)) return { status: 'fail', detail: 'Login RPC response contains a password field' };
+      return { status: 'pass', detail: 'No password fields in login responses' };
     });
 
-    await run('bb-04', 'Blackbox — Auth', 'Admin PIN check', async () => {
-      const correct = 'safepass2025' === ADMIN_PIN;
-      if (!correct) return { status: 'fail', detail: `ADMIN_PIN mismatch` };
-      return { status: 'pass', detail: 'Admin PIN constant is correct' };
+    await run('bb-04', 'Blackbox — Tenancy', 'Loaded data belongs to this campus only', async () => {
+      const { data, error } = await supabase.from('students').select('branch_id').eq('branch_id', branchId);
+      if (error) return { status: 'fail', detail: error.message };
+      const foreign = (data || []).filter(r => r.branch_id !== branchId).length
+        + students.filter((r: any) => r.branch_id && r.branch_id !== branchId).length;
+      if (foreign) return { status: 'fail', detail: `${foreign} rows from another campus are visible` };
+      return { status: 'pass', detail: `${(data || []).length} students, all in ${branch?.name ?? 'this campus'}` };
     });
 
     // ── BLACKBOX: Student Counts ──────────────────────────────────────
     await run('bb-05', 'Blackbox — Data', 'Student count ≥ 50', async () => {
-      const { count, error } = await supabase.from('students').select('*', { count: 'exact', head: true });
+      const { count, error } = await supabase.from('students').select('*', { count: 'exact', head: true }).eq('branch_id', branchId);
       if (error) return { status: 'fail', detail: error.message };
       if ((count ?? 0) < 50) return { status: 'warn', detail: `Only ${count} students — run the seed SQL to reach 50` };
       return { status: 'pass', detail: `${count} students in database` };
     });
 
     await run('bb-06', 'Blackbox — Data', 'Parent account count ≥ 30', async () => {
-      const { count, error } = await supabase.from('parent_accounts').select('*', { count: 'exact', head: true });
+      const { count, error } = await supabase.from('parent_accounts').select('*', { count: 'exact', head: true }).eq('branch_id', branchId);
       if (error) return { status: 'fail', detail: error.message };
       if ((count ?? 0) < 30) return { status: 'warn', detail: `Only ${count} accounts — run the seed SQL` };
       return { status: 'pass', detail: `${count} parent accounts in database` };
     });
 
     await run('bb-07', 'Blackbox — Data', 'Multiple grade levels exist (1–5)', async () => {
-      const { data, error } = await supabase.from('students').select('grade').not('grade','is',null);
+      const { data, error } = await supabase.from('students').select('grade').eq('branch_id', branchId).not('grade','is',null);
       if (error) return { status: 'fail', detail: error.message };
       const levels = new Set((data||[]).map(s => s.grade?.match(/(\d+)/)?.[1]).filter(Boolean));
       if (levels.size < 3) return { status: 'warn', detail: `Only ${levels.size} grade levels: ${[...levels].join(', ')}` };
@@ -1306,7 +1432,7 @@ export default function AdminPortal() {
     });
 
     await run('bb-08', 'Blackbox — Data', 'Multiple sections exist (A, B, C)', async () => {
-      const { data, error } = await supabase.from('students').select('grade').not('grade','is',null);
+      const { data, error } = await supabase.from('students').select('grade').eq('branch_id', branchId).not('grade','is',null);
       if (error) return { status: 'fail', detail: error.message };
       const sections = new Set((data||[]).map(s => s.grade?.match(/-([A-Z])/i)?.[1]?.toUpperCase()).filter(Boolean));
       if (sections.size < 2) return { status: 'warn', detail: `Only ${sections.size} section(s): ${[...sections].join(', ')}` };
@@ -1314,7 +1440,7 @@ export default function AdminPortal() {
     });
 
     await run('bb-09', 'Blackbox — Data', 'Both gates are used', async () => {
-      const { data, error } = await supabase.from('students').select('gate').not('gate','is',null);
+      const { data, error } = await supabase.from('students').select('gate').eq('branch_id', branchId).not('gate','is',null);
       if (error) return { status: 'fail', detail: error.message };
       const gates = new Set((data||[]).map(s => s.gate));
       if (gates.size < 2) return { status: 'warn', detail: `Only ${gates.size} gate(s): ${[...gates].join(', ')}` };
@@ -1435,7 +1561,7 @@ export default function AdminPortal() {
             <View>
               <Text style={s.logoTitle}>SafePass</Text>
               <Text style={s.logoSub}>Admin Portal</Text>
-              <Text style={s.logoCampus}>North Campus</Text>
+              <Text style={s.logoCampus}>{branch ? `${branch.school_name} — ${branch.name}` : ''}</Text>
             </View>
           </View>
           <View style={s.navLinks}>
@@ -1458,13 +1584,25 @@ export default function AdminPortal() {
             ))}
           </View>
           <View style={s.sidebarBottom}>
+            {session.role !== 'branch' && (
+              <Pressable style={s.navItem} onPress={backToSuperAdmin}>
+                <Text style={s.navIcon}>🏛️</Text>
+                <Text style={s.navLabel}>Back to Super Admin</Text>
+              </Pressable>
+            )}
+            {session.branches.length > 1 && (
+              <Pressable style={s.navItem} onPress={() => selectBranch(null)}>
+                <Text style={s.navIcon}>⇄</Text>
+                <Text style={s.navLabel}>Switch Campus</Text>
+              </Pressable>
+            )}
             <Pressable style={s.navItem} onPress={() => router.replace('/')}>
               <Text style={s.navIcon}>🏠</Text>
               <Text style={s.navLabel}>Back to Home</Text>
             </Pressable>
-            <Pressable style={s.navItem} onPress={() => { setPinAuthed(false); setPinInput(''); }}>
+            <Pressable style={s.navItem} onPress={handleLogout}>
               <Text style={s.navIcon}>🔒</Text>
-              <Text style={s.navLabel}>Lock Portal</Text>
+              <Text style={s.navLabel}>Sign Out</Text>
             </Pressable>
           </View>
         </View>
@@ -1487,7 +1625,7 @@ export default function AdminPortal() {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: isMobile ? 6 : 12 }}>
             <View style={[s.gpsBadge, isMobile && { paddingHorizontal: 6, paddingVertical: 4 }]}><View style={s.gpsDot} /><Text style={[s.gpsBadgeText, isMobile && { fontSize: 10 }]}>{isMobile ? 'GPS' : 'GPS Active'}</Text></View>
-            <View style={[s.avBubble, isMobile && { width: 28, height: 28, borderRadius: 14 }]}><Text style={{ fontSize: isMobile ? 10 : 12, fontWeight: '700', color: SLATE }}>SA</Text></View>
+            <View style={[s.avBubble, isMobile && { width: 28, height: 28, borderRadius: 14 }]}><Text style={{ fontSize: isMobile ? 10 : 12, fontWeight: '700', color: SLATE }}>{(session.username || 'A').slice(0, 2).toUpperCase()}</Text></View>
             <Text style={{ fontSize: isMobile ? 14 : 18, fontWeight: '700', color: SLATE }}>
               {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', ...(isMobile ? {} : { second: '2-digit' }) })}
             </Text>
@@ -1495,6 +1633,16 @@ export default function AdminPortal() {
         </View>
 
         <ScrollView style={s.canvas} contentContainerStyle={{ padding: isMobile ? 12 : 24, paddingBottom: isMobile ? 110 : 48 }}>
+          {!branchLive ? (
+            <View style={s.pausedBanner}>
+              <Text style={s.pausedBannerText}>
+                ⏸️ This campus is {branch?.status ?? 'unavailable'} — parents, drivers and branch admins are currently blocked.
+              </Text>
+            </View>
+          ) : null}
+          {isMobile && branch ? (
+            <Text style={s.mobileCampus}>{branch.school_name} — {branch.name}</Text>
+          ) : null}
           {renderContent()}
         </ScrollView>
       </View>
@@ -1524,9 +1672,21 @@ export default function AdminPortal() {
               <Text style={{ fontSize: 18 }}>🏠</Text>
               <Text style={s.mobileNavLabel}>Home</Text>
             </Pressable>
-            <Pressable style={s.mobileNavItem} onPress={() => { setPinAuthed(false); setPinInput(''); }}>
+            {session.role !== 'branch' && (
+              <Pressable style={s.mobileNavItem} onPress={backToSuperAdmin}>
+                <Text style={{ fontSize: 18 }}>🏛️</Text>
+                <Text style={s.mobileNavLabel}>Super</Text>
+              </Pressable>
+            )}
+            {session.branches.length > 1 && (
+              <Pressable style={s.mobileNavItem} onPress={() => selectBranch(null)}>
+                <Text style={{ fontSize: 18 }}>⇄</Text>
+                <Text style={s.mobileNavLabel}>Campus</Text>
+              </Pressable>
+            )}
+            <Pressable style={s.mobileNavItem} onPress={handleLogout}>
               <Text style={{ fontSize: 18 }}>🔒</Text>
-              <Text style={s.mobileNavLabel}>Lock</Text>
+              <Text style={s.mobileNavLabel}>Sign Out</Text>
             </Pressable>
           </ScrollView>
         </View>
@@ -1778,6 +1938,13 @@ export default function AdminPortal() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
+  campusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: BORDER, borderRadius: 12, padding: 14, backgroundColor: SURFACE },
+  campusSchool: { fontSize: 15, fontWeight: '800', color: SLATE_DARK },
+  campusBranch: { fontSize: 12, color: MUTED, marginTop: 2 },
+  campusPaused: { fontSize: 10, fontWeight: '800', color: '#b45309', backgroundColor: '#fef3c7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  pausedBanner: { backgroundColor: '#fef3c7', borderLeftWidth: 4, borderLeftColor: '#f59e0b', borderRadius: 10, padding: 12, marginBottom: 16 },
+  pausedBannerText: { color: '#92400e', fontWeight: '700', fontSize: 13 },
+  mobileCampus: { fontSize: 12, fontWeight: '700', color: SLATE, marginBottom: 10 },
   // PIN gate
   pinRoot: { flex: 1, backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center', padding: 24 },
   pinCard: { backgroundColor: WHITE, borderRadius: 20, padding: 36, width: '100%', maxWidth: 420, gap: 16, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
