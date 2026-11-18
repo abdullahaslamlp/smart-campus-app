@@ -110,7 +110,7 @@ export function Mark({ size = 36 }: { size?: number }) {
 }
 
 // ─── Buttons ──────────────────────────────────────────────────────────────────
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'destructive' | 'success';
 
 export function Button({ label, onPress, variant = 'primary', loading, disabled, size = 'md', style, full, icon: Icon }: {
   label: string; onPress?: () => void; variant?: ButtonVariant; loading?: boolean; disabled?: boolean;
@@ -152,6 +152,7 @@ const buttonVariants: Record<ButtonVariant, { bg: string; fg: string; border: st
   secondary: { bg: color.surface, fg: color.ink, border: color.borderStrong, pressed: color.sunken },
   ghost: { bg: 'transparent', fg: color.accent, border: 'transparent', pressed: color.accentSoft },
   danger: { bg: 'transparent', fg: color.danger, border: 'transparent', pressed: color.dangerSoft },
+  destructive: { bg: color.danger, fg: '#FFFFFF', border: color.danger, pressed: '#8F1D14' },
 };
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
@@ -407,8 +408,8 @@ export function CampusPicker({ value, onChange }: { value: BranchOption | null; 
 }
 
 // ─── Sign-in layout ───────────────────────────────────────────────────────────
-export function AuthLayout({ title, subtitle, onBack, footer, children }: {
-  title: string; subtitle?: string; onBack: () => void; footer?: string; children: ReactNode;
+export function AuthLayout({ title, subtitle, onBack, backLabel = 'Back', footer, children }: {
+  title: string; subtitle?: string; onBack: () => void; backLabel?: string; footer?: string; children: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   return (
@@ -424,7 +425,7 @@ export function AuthLayout({ title, subtitle, onBack, footer, children }: {
         <Pressable onPress={onBack} hitSlop={8} accessibilityRole="link"
           style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: -4 }}>
           <ChevronLeft size={18} color={color.accent} strokeWidth={ICON_STROKE} />
-          <Text style={[type.small, { color: color.accent, fontWeight: '600' }]}>Back</Text>
+          <Text style={[type.small, { color: color.accent, fontWeight: '600' }]}>{backLabel}</Text>
         </Pressable>
         <View style={{ gap: space.sm }}>
           <Mark size={36} />

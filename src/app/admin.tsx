@@ -1,15 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import {
-  ActivityIndicator, Alert, Platform, Pressable,
-  ScrollView, StyleSheet, Text, TextInput, View,
-  useWindowDimensions,
-} from 'react-native';
+  ArrowLeftRight, ChevronRight, CircleAlert, CircleCheck, ClipboardList, Bus, GraduationCap, KeyRound, Landmark,
+  LayoutDashboard, LogOut, MapPin, MapPinned, Pencil, Play, Plus, Power, RotateCcw, Send, Trash2, TriangleAlert,
+  UsersRound, FlaskConical,
+} from 'lucide-react-native';
 import { supabase } from '../../supabase';
 import {
-  LOGIN_ERRORS, PausedScreen, isSessionError, loadSession, rpcErrorCode, rpcMessage, saveSession,
+  LOGIN_ERRORS, isSessionError, loadSession, rpcErrorCode, rpcMessage, saveSession,
   subscribeBranchPings, useBranch,
 } from '../lib/tenant';
+import {
+  AuthLayout, Button, Card, Loading, Notice, PasswordField, PausedNotice, StatusPill, TextField, color, radius, space, type,
+} from '../lib/ui';
+import {
+  AdminShell, Cell, ChipGroup, ChipRow, Column, ConfirmDialog, ConfirmOptions, DataTable, Dialog, IconButton, Kpi, KpiRow,
+  NavItem, PageHeader, Pill, SearchInput, Segmented, Toast,
+} from '../lib/admin-ui';
 
 // ─── Admin session ────────────────────────────────────────────────────────────
 export interface AdminBranch {
@@ -57,102 +65,9 @@ interface TransporterAccount {
   is_active: boolean; created_at: string;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const SLATE = '#466179';
-const SLATE_DARK = '#2d3f50';
-const SLATE_LIGHT = '#b0cce8';
-const WHITE = '#ffffff';
-const SURFACE = '#f4f7fb';
-const BORDER = '#c3c7cd';
-const TEXT = '#1a1c1d';
-const MUTED = '#767779';
-const SIDEBAR_W = 260;
-
-// ─── Haversine ────────────────────────────────────────────────────────────────
-function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000, toRad = (x: number) => x * Math.PI / 180;
-  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// ─── FormField (must be outside component to keep stable identity across renders) ──
-function FormField({ label, value, setter, placeholder, secret = false }: {
-  label: string; value: string; setter: (v: string) => void;
-  placeholder: string; secret?: boolean;
-}) {
-  return (
-    <View style={{ gap: 4 }}>
-      <Text style={s.formLabel}>{label}</Text>
-      {Platform.OS === 'web' ? (
-        // @ts-ignore
-        <input
-          style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e: any) => setter(e.target.value)}
-        />
-      ) : (
-        <TextInput
-          style={s.formInput}
-          placeholder={placeholder}
-          value={value}
-          onChangeText={setter}
-          secureTextEntry={secret}
-          placeholderTextColor={MUTED}
-        />
-      )}
-    </View>
-  );
-}
-
-// ─── FilterBar (stable module-level component to avoid remount focus loss) ──
-function FilterBar({ classes, sections, filterClass, filterSection, onClassChange, onSectionChange }: {
-  classes: string[]; sections: string[];
-  filterClass: string; filterSection: string;
-  onClassChange: (v: string) => void; onSectionChange: (v: string) => void;
-}) {
-  return (
-    <View style={{ gap: 6, marginBottom: 12 }}>
-      {/* Class row */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
-        <Pressable onPress={() => { onClassChange(''); onSectionChange(''); }}
-          style={[s.filterChip, !filterClass && s.filterChipActive]}>
-          <Text style={[s.filterChipTxt, !filterClass && s.filterChipTxtActive]}>All Classes</Text>
-        </Pressable>
-        {classes.map(c => (
-          <Pressable key={c} onPress={() => { onClassChange(c); onSectionChange(''); }}
-            style={[s.filterChip, filterClass === c && s.filterChipActive]}>
-            <Text style={[s.filterChipTxt, filterClass === c && s.filterChipTxtActive]}>Grade {c}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-      {/* Section row — only shows when a class is selected */}
-      {filterClass ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
-          <Pressable onPress={() => onSectionChange('')}
-            style={[s.filterChip, s.filterChipSec, !filterSection && s.filterChipSecActive]}>
-            <Text style={[s.filterChipTxt, !filterSection && s.filterChipTxtActive]}>All Sections</Text>
-          </Pressable>
-          {sections.map(sec => (
-            <Pressable key={sec} onPress={() => onSectionChange(sec)}
-              style={[s.filterChip, s.filterChipSec, filterSection === sec && s.filterChipSecActive]}>
-              <Text style={[s.filterChipTxt, filterSection === sec && s.filterChipTxtActive]}>Section {sec}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : null}
-    </View>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminPortal() {
   const router = useRouter();
-  const { width: windowWidth } = useWindowDimensions();
-  const isMobile = Platform.OS !== 'web' || windowWidth < 768;
 
   // ── Admin auth ──
   const [session, setSession] = useState<AdminSession | null>(() => getAdminSession());
@@ -160,7 +75,6 @@ export default function AdminPortal() {
   const [loginPw, setLoginPw] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
-  const [showPin, setShowPin] = useState(false);
   const branchId = session?.branchId ?? null;
   const pinAuthed = !!branchId;
   const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
@@ -170,7 +84,10 @@ export default function AdminPortal() {
   const [accounts, setAccounts] = useState<ParentAccount[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(true);
   const [accountsLoading, setAccountsLoading] = useState(true);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [toast, setToast] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [confirmState, setConfirmState] = useState<{ opts: ConfirmOptions; resolve: (ok: boolean) => void } | null>(null);
   const [activeNav, setActiveNav] = useState<NavSection>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterClass, setFilterClass] = useState('');
@@ -196,6 +113,7 @@ export default function AdminPortal() {
   const [ns_gate, setNs_gate] = useState('Gate A');
   const [ns_parentId, setNs_parentId] = useState('');
   const [ns_loading, setNs_loading] = useState(false);
+  const [nsError, setNsError] = useState('');
 
   // ── Parent Account modals ──
   const [addAccountOpen, setAddAccountOpen] = useState(false);
@@ -222,12 +140,6 @@ export default function AdminPortal() {
   const [nt_loading, setNt_loading] = useState(false);
   const [transporterModalError, setTransporterModalError] = useState('');
 
-  // ── Password Visibility Toggles ──
-  const [showParentPasswords, setShowParentPasswords] = useState(false);
-  const [showTransporterPasswords, setShowTransporterPasswords] = useState(false);
-  const [showParentModalPw, setShowParentModalPw] = useState(false);
-  const [showTransporterModalPw, setShowTransporterModalPw] = useState(false);
-
   // ─── PIN Login ─────────────────────────────────────────────────────────────
   const updateSession = (next: AdminSession | null) => {
     setAdminSession(next);
@@ -236,18 +148,18 @@ export default function AdminPortal() {
 
   const handlePinLogin = async () => {
     if (!loginUser.trim() || !loginPw) {
-      setLoginError('Please enter your username and password.');
+      setLoginError('Enter your username and password.');
       return;
     }
     setLoginError('');
     setLoginLoading(true);
     try {
       const { data, error } = await supabase.rpc('login_admin', { p_username: loginUser, p_password: loginPw });
-      if (error) { setLoginError('Connection error. Please try again.'); console.error('[adminLogin]', error.message); return; }
+      if (error) { setLoginError('Couldn’t reach the server. Check your connection and try again.'); console.error('[adminLogin]', error.message); return; }
       if (!data?.ok) {
         setLoginError(data?.error === 'no_branch'
           ? 'No campus is assigned to this admin account.'
-          : LOGIN_ERRORS[data?.error] ?? 'Login failed. Please try again.');
+          : LOGIN_ERRORS[data?.error] ?? 'Sign-in failed. Please try again.');
         return;
       }
       const branches: AdminBranch[] = data.branches || [];
@@ -260,7 +172,7 @@ export default function AdminPortal() {
       });
       setLoginPw('');
     } catch (e: any) {
-      setLoginError('An unexpected error occurred.');
+      setLoginError('Something went wrong. Please try again.');
       console.error('[adminLogin]', e.message);
     } finally {
       setLoginLoading(false);
@@ -300,13 +212,14 @@ export default function AdminPortal() {
     return data;
   };
 
-  const showError = (title: string, e: any) => {
-    const msg = rpcMessage(e);
-    if (Platform.OS === 'web') window.alert(`${title}\n\n${msg}`);
-    else Alert.alert(title, msg);
+  const notify = (tone: 'error' | 'success', text: string) => {
+    setToast({ tone, text });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), tone === 'success' ? 3500 : 9000);
   };
-
-  const confirmWeb = (message: string) => (Platform.OS === 'web' ? window.confirm(message) : true);
+  const showError = (title: string, e: any) => notify('error', `${title}: ${rpcMessage(e)}`);
+  const confirmAsync = (opts: ConfirmOptions) => new Promise<boolean>(resolve => setConfirmState({ opts, resolve }));
+  const answerConfirm = (ok: boolean) => { confirmState?.resolve(ok); setConfirmState(null); };
 
   // One snapshot of the campus (students, parents, transporters — never passwords).
   const loadAll = async () => {
@@ -316,6 +229,7 @@ export default function AdminPortal() {
       setStudents((data?.students as Student[]) || []);
       setAccounts((data?.parents as ParentAccount[]) || []);
       setTransporters((data?.transporters as TransporterAccount[]) || []);
+      setLastSync(new Date());
     } catch (e: any) {
       console.error('[loadAll]', e.message);
     } finally {
@@ -331,7 +245,6 @@ export default function AdminPortal() {
     if (!pinAuthed) return;
 
     loadAll();
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     const unsubscribe = subscribeBranchPings(branchId!, what => {
       if (what === 'students' || what === 'parent_accounts' || what === 'transporter_accounts') loadAll();
     });
@@ -345,7 +258,6 @@ export default function AdminPortal() {
     if (Platform.OS === 'web') window.addEventListener('message', handleMapMessage);
 
     return () => {
-      clearInterval(timer);
       clearInterval(poll);
       unsubscribe();
       if (Platform.OS === 'web') window.removeEventListener('message', handleMapMessage);
@@ -401,6 +313,7 @@ export default function AdminPortal() {
         p_linked_parent_ids: nt_linkedParents,
       });
       setAddTransporterOpen(false);
+      notify('success', editTransporter ? 'Driver updated.' : 'Driver created.');
       loadAll();
     } catch (e: any) {
       setTransporterModalError(rpcMessage(e));
@@ -415,7 +328,7 @@ export default function AdminPortal() {
   };
 
   const handleDeleteTransporter = async (tr: TransporterAccount) => {
-    if (!confirmWeb(`Delete driver "${tr.driver_name}" (${tr.driver_id})?`)) return;
+    if (!(await confirmAsync({ title: 'Delete driver?', message: `${tr.driver_name} (${tr.driver_id}) will be removed and can no longer sign in. This can’t be undone.`, confirmLabel: 'Delete driver', tone: 'danger' }))) return;
     try {
       await adminRpc('admin_delete_transporter', { p_id: tr.id });
       loadAll();
@@ -433,9 +346,11 @@ export default function AdminPortal() {
 
   // ─── Admin Handlers ───────────────────────────────────────────────────────
   const handleResetDemo = async () => {
+    if (!(await confirmAsync({ title: 'Reset all students to “In class”?', message: 'Every student on this campus goes back to waiting and the last recorded distances are cleared. Use this to start a fresh dismissal.', confirmLabel: 'Reset all', tone: 'danger' }))) return;
     setResetLoading(true);
     try {
       await adminRpc('admin_reset_demo');
+      notify('success', 'All students are back in class.');
       loadAll();
     } catch (e: any) { showError('Reset failed', e); }
     finally { setResetLoading(false); }
@@ -444,6 +359,7 @@ export default function AdminPortal() {
   const handleDispatch = async (id: string) => {
     try {
       await adminRpc('admin_set_student_status', { p_student_id: id, p_status: 'dispatched' });
+      notify('success', 'Student sent to the gate.');
       loadAll();
     } catch (e: any) { showError('Dispatch failed', e); }
   };
@@ -453,6 +369,7 @@ export default function AdminPortal() {
       await adminRpc('admin_save_geofence', { p_lat: tempLocation.lat, p_lng: tempLocation.lng });
       setSchoolLocation(tempLocation);
       setIsMapOpen(false);
+      notify('success', 'Gate location saved.');
     } catch (e: any) { showError('Could not save location', e); }
   };
 
@@ -462,14 +379,16 @@ export default function AdminPortal() {
       setGeofenceRadius(tempRadius);
       setRadiusSaved(true);
       setTimeout(() => setRadiusSaved(false), 2000);
+      notify('success', `Pickup radius saved (${tempRadius} m).`);
     } catch (e: any) { showError('Could not save radius', e); }
   };
 
   // ─── Add Student ──────────────────────────────────────────────────────────
   const handleAddStudent = async () => {
     if (!ns_name.trim() || !ns_parentId.trim()) {
-      showError('Validation', new Error('Name and Guardian ID are required.')); return;
+      setNsError('Enter the student’s name and the guardian ID.'); return;
     }
+    setNsError('');
     setNs_loading(true);
     try {
       await adminRpc('admin_add_student', {
@@ -477,8 +396,9 @@ export default function AdminPortal() {
         p_gate: ns_gate, p_parent_id: ns_parentId.trim().toLowerCase(),
       });
       setAddStudentOpen(false); setNs_name(''); setNs_grade(''); setNs_parentId('');
+      notify('success', 'Student added.');
       loadAll();
-    } catch (e: any) { showError('Could not add student', e); }
+    } catch (e: any) { setNsError(rpcMessage(e)); }
     finally { setNs_loading(false); }
   };
 
@@ -517,6 +437,7 @@ export default function AdminPortal() {
         p_phone: na_phone.trim() || null,
       });
       setAddAccountOpen(false);
+      notify('success', editAccount ? 'Account updated.' : 'Account created.');
       loadAll();
     } catch (e: any) {
       // Show error inside the modal so it's never missed
@@ -534,680 +455,14 @@ export default function AdminPortal() {
   };
 
   const handleDeleteAccount = async (acc: ParentAccount) => {
-    const doDelete = async () => {
-      try {
-        await adminRpc('admin_delete_parent', { p_id: acc.id });
-        loadAll();
-      } catch (e: any) { showError('Delete failed', e); }
-    };
-    if (Platform.OS === 'web') {
-      if (window.confirm(`Delete ${acc.full_name}'s account? This cannot be undone.`)) doDelete();
-      return;
-    }
-    Alert.alert('Delete Account', `Delete ${acc.full_name}'s account? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: doDelete },
-    ]);
+    if (!(await confirmAsync({ title: 'Delete parent account?', message: `${acc.full_name} (${acc.parent_id}) will be removed and can no longer sign in. This can’t be undone.`, confirmLabel: 'Delete account', tone: 'danger' }))) return;
+    try {
+      await adminRpc('admin_delete_parent', { p_id: acc.id });
+      notify('success', 'Account deleted.');
+      loadAll();
+    } catch (e: any) { showError('Delete failed', e); }
   };
 
-  // ─── Status style ─────────────────────────────────────────────────────────
-  const statusStyle = (s: string) => {
-    if (s === 'dispatched') return { bg: '#d1e4ff', text: '#001d35' };
-    if (s === 'arrived') return { bg: '#b7d7ff', text: '#28496a' };
-    if (s === 'received') return { bg: '#e0e7ff', text: '#3730a3' };
-    return { bg: '#e2e2e4', text: '#43474d' };
-  };
-
-  // ─── Login Gate ───────────────────────────────────────────────────────────
-  if (!session) {
-    const webInput = (extra: any) => ({ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box', ...extra } as any);
-    return (
-      <View style={s.pinRoot}>
-        <View style={s.pinCard}>
-          <View style={s.pinLogoWrap}>
-            <Text style={{ fontSize: 36 }}>🛡️</Text>
-          </View>
-          <Text style={s.pinTitle}>Admin Portal</Text>
-          <Text style={s.pinSub}>Sign in with your campus admin account</Text>
-
-          {loginError ? <View style={s.errorBanner}><Text style={s.errorText}>⚠️ {loginError}</Text></View> : null}
-
-          <View style={{ gap: 4, alignSelf: 'stretch' }}>
-            <Text style={s.formLabel}>Username</Text>
-            {Platform.OS === 'web' ? (
-              // @ts-ignore
-              <input style={webInput({})} placeholder="e.g. branch1_admin" value={loginUser}
-                autoComplete="username" onChange={(e: any) => setLoginUser(e.target.value)} />
-            ) : (
-              <TextInput style={s.formInput} placeholder="e.g. branch1_admin" value={loginUser}
-                onChangeText={setLoginUser} autoCapitalize="none" placeholderTextColor={MUTED} />
-            )}
-          </View>
-
-          <View style={{ gap: 4, alignSelf: 'stretch' }}>
-            <Text style={s.formLabel}>Password</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {Platform.OS === 'web' ? (
-                // @ts-ignore
-                <input
-                  style={webInput({ flex: 1 })}
-                  type={showPin ? 'text' : 'password'}
-                  placeholder="Enter password"
-                  value={loginPw}
-                  autoComplete="current-password"
-                  onChange={(e: any) => setLoginPw(e.target.value)}
-                  onKeyDown={(e: any) => e.key === 'Enter' && handlePinLogin()}
-                />
-              ) : (
-                <TextInput style={[s.formInput, { flex: 1 }]}
-                  placeholder="Enter password" value={loginPw}
-                  onChangeText={setLoginPw} secureTextEntry={!showPin}
-                  placeholderTextColor={MUTED} />
-              )}
-              <Pressable style={s.eyeBtn} onPress={() => setShowPin(p => !p)}>
-                <Text style={{ fontSize: 18 }}>{showPin ? '🙈' : '👁️'}</Text>
-              </Pressable>
-            </View>
-          </View>
-
-          <Pressable style={s.pinBtn} onPress={handlePinLogin} disabled={loginLoading}>
-            {loginLoading
-              ? <ActivityIndicator color={WHITE} />
-              : <Text style={s.pinBtnText}>Sign In →</Text>}
-          </Pressable>
-
-          <Pressable onPress={() => router.replace('/')}>
-            <Text style={s.backLink}>← Back to Home</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  // ─── Campus chooser (admins with access to several campuses) ─────────────
-  if (!branchId) {
-    return (
-      <View style={s.pinRoot}>
-        <View style={[s.pinCard, { maxWidth: 520 }]}>
-          <Text style={s.pinTitle}>Choose a Campus</Text>
-          <Text style={s.pinSub}>Signed in as {session.fullName || session.username}</Text>
-          {session.branches.length === 0 ? (
-            <Text style={s.pinSub}>No campuses are assigned to this account yet.</Text>
-          ) : (
-            <View style={{ alignSelf: 'stretch', gap: 8 }}>
-              {session.branches.map(b => (
-                <Pressable key={b.branch_id} style={s.campusRow} onPress={() => selectBranch(b.branch_id)}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.campusSchool}>{b.school_name}</Text>
-                    <Text style={s.campusBranch}>{b.branch_name} · {b.branch_code}</Text>
-                  </View>
-                  {b.status !== 'active' ? <Text style={s.campusPaused}>{b.status.toUpperCase()}</Text> : null}
-                  <Text style={{ color: SLATE, fontWeight: '700' }}>→</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-          <Pressable onPress={handleLogout}>
-            <Text style={s.backLink}>Sign out</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  if (branchLoading) {
-    return (
-      <View style={s.pinRoot}><ActivityIndicator color={SLATE} size="large" /></View>
-    );
-  }
-
-  // Branch admins are locked out of a paused campus; owners / super admins can still manage it.
-  if (session.role === 'branch' && !branchLive) {
-    return <PausedScreen branch={branch} onExit={handleLogout} />;
-  }
-
-  // ─── ADMIN PORTAL ─────────────────────────────────────────────────────────
-  // Parse "Grade 5-A" → { cls: '5', sec: 'A' }
-  const parseGrade = (grade?: string | null) => {
-    if (!grade) return { cls: '', sec: '' };
-    const m = grade.match(/(\d+)-([A-Za-z]+)/);
-    return m ? { cls: m[1], sec: m[2].toUpperCase() } : { cls: '', sec: '' };
-  };
-
-  // Unique sorted class numbers across all students
-  const allClasses = [...new Set(
-    students.map(x => parseGrade(x.grade).cls).filter(Boolean)
-  )].sort((a, b) => Number(a) - Number(b));
-
-  // Sections available within the selected class
-  const allSections = [...new Set(
-    students
-      .filter(x => !filterClass || parseGrade(x.grade).cls === filterClass)
-      .map(x => parseGrade(x.grade).sec)
-      .filter(Boolean)
-  )].sort();
-
-  // Central filter helper
-  const applyFilter = (list: Student[]) => list.filter(x => {
-    const { cls, sec } = parseGrade(x.grade);
-    const matchClass   = !filterClass   || cls === filterClass;
-    const matchSection = !filterSection || sec === filterSection;
-    const matchSearch  = !searchQuery   ||
-      x.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      x.parent_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      x.grade?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchClass && matchSection && matchSearch;
-  });
-
-  const dispatchedCount = students.filter(x => x.status === 'dispatched').length;
-  const receivedCount = students.filter(x => x.status === 'received').length;
-  // Legacy filtered (dashboard uses applyFilter below)
-  const filtered = applyFilter(students);
-
-  const renderDashboard = () => (
-    <>
-      {/* Class / Section filter bar */}
-      <FilterBar
-        classes={allClasses} sections={allSections}
-        filterClass={filterClass} filterSection={filterSection}
-        onClassChange={setFilterClass} onSectionChange={setFilterSection}
-      />
-      {/* KPI Row */}
-      <View style={s.kpiRow}>
-        {[
-          { label: 'TOTAL STUDENTS', value: studentsLoading ? '…' : String(filtered.length === students.length ? students.length : `${filtered.length}/${students.length}`), sub: filterClass ? `Grade ${filterClass}${filterSection ? '-' + filterSection : ''}` : 'Enrolled', icon: '👥', subColor: SLATE },
-          { label: 'ACTIVE DISMISSALS', value: String(filtered.filter(x => x.status === 'dispatched').length), sub: 'In progress', icon: '🚶', subColor: SLATE },
-          { label: 'RECEIVED TODAY', value: String(filtered.filter(x => x.status === 'received').length), sub: 'Safely home', icon: '🏠', subColor: '#3730a3' },
-          { label: 'PARENT ACCOUNTS', value: accountsLoading ? '…' : String(accounts.length), sub: String(accounts.filter(a => a.is_active).length) + ' active', icon: '👨‍👩‍👧', subColor: '#10B981' },
-          { label: 'GEOFENCE RADIUS', value: `${geofenceRadius}m`, sub: 'Standard Range', icon: '📡', subColor: MUTED },
-        ].map((kpi, i) => (
-          <View key={i} style={s.kpiCard}>
-            <View style={s.kpiTop}>
-              <Text style={s.kpiLabel}>{kpi.label}</Text>
-              <Text style={s.kpiIcon}>{kpi.icon}</Text>
-            </View>
-            <Text style={s.kpiValue}>{kpi.value}</Text>
-            <Text style={[s.kpiSub, { color: kpi.subColor }]}>{kpi.sub}</Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Split: Dispatch Logs + Geofence Controls */}
-      <View style={s.splitRow}>
-        {/* Live Dispatch Logs */}
-        <View style={s.panel}>
-          <View style={s.panelHeader}>
-            <Text style={s.panelTitle}>Live Dispatch Logs</Text>
-            <View style={s.panelHeaderRight}>
-              <Pressable style={s.smBtn} onPress={handleResetDemo} disabled={resetLoading}>
-                {resetLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Reset</Text>}
-              </Pressable>
-            </View>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={{ minWidth: 550, width: '100%' }}>
-              <View style={s.tableHeader}>
-                {['Time', 'Student', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
-                  <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
-                ))}
-              </View>
-              {studentsLoading ? (
-                <View style={s.loader}><ActivityIndicator color={SLATE} /><Text style={s.loaderText}>Loading…</Text></View>
-              ) : filtered.length === 0 ? (
-                <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
-              ) : filtered.map(item => {
-                const st = statusStyle(item.status);
-                return (
-                  <Pressable key={item.id} style={s.tableRow}
-                    onPress={() => item.status === 'waiting' && handleDispatch(item.id)}>
-                    <Text style={[s.td, { color: MUTED }]}>
-                      {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </Text>
-                    <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
-                    <Text style={s.td}>{item.parent_id}</Text>
-                    <Text style={s.td}>{item.gate || '—'}</Text>
-                    <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
-                    <View style={s.td}>
-                      <View style={[s.pill, { backgroundColor: st.bg }]}>
-                        <Text style={[s.pillText, { color: st.text }]}>
-                          {item.status === 'received' ? 'Received 🏠' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                        </Text>
-                      </View>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </ScrollView>
-        </View>
-
-        {/* Geofence Quick Controls */}
-        <View style={s.geoPanel}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <Text style={{ fontSize: 26 }}>📡</Text>
-            <Text style={s.panelTitle}>Geofence{'\n'}Controls</Text>
-          </View>
-          <Text style={{ fontSize: 13, color: MUTED, lineHeight: 18 }}>
-            Adjust detection radius for automatic arrival triggers.
-          </Text>
-          <View style={{ gap: 6, marginTop: 8 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <Text style={{ fontSize: 12, color: MUTED }}>50m</Text>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: SLATE }}>{tempRadius}m</Text>
-              <Text style={{ fontSize: 12, color: MUTED }}>500m</Text>
-            </View>
-            {Platform.OS === 'web' ? (
-              // @ts-ignore
-              <input type="range" min="50" max="500" value={tempRadius}
-                onChange={(e: any) => setTempRadius(Number(e.target.value))}
-                style={{ width: '100%', accentColor: SLATE, cursor: 'pointer' }} />
-            ) : (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                {[50, 100, 150, 200, 300, 500].map(v => (
-                  <Pressable key={v} style={[s.chip, tempRadius === v && s.chipActive]} onPress={() => setTempRadius(v)}>
-                    <Text style={[s.chipText, tempRadius === v && { color: WHITE }]}>{v}m</Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
-          </View>
-          <Pressable style={s.mapBtn} onPress={() => setIsMapOpen(true)}>
-            <Text style={s.mapBtnText}>📍 Set Gate on Map</Text>
-          </Pressable>
-          <Text style={{ fontSize: 11, color: MUTED, textAlign: 'center' }}>
-            📌 {schoolLocation.lat.toFixed(4)}, {schoolLocation.lng.toFixed(4)}
-          </Text>
-          <Pressable style={[s.saveBtn, radiusSaved && { backgroundColor: '#10B981' }]} onPress={saveGeofenceRadius}>
-            <Text style={s.saveBtnText}>{radiusSaved ? '✅ Saved!' : '💾 Save Configuration'}</Text>
-          </Pressable>
-        </View>
-      </View>
-    </>
-  );
-
-  const renderStudentDirectory = () => {
-    const filtSt = applyFilter(students);
-    return (
-      <View style={s.panel}>
-        <View style={s.panelHeader}>
-          <Text style={s.panelTitle}>👥 Student Directory</Text>
-          <View style={s.panelHeaderRight}>
-            <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{filtSt.length} students</Text>
-            <Pressable style={[s.smBtn, { backgroundColor: SLATE }]} onPress={() => setAddStudentOpen(true)}>
-              <Text style={[s.smBtnText, { color: WHITE }]}>+ Add Student</Text>
-            </Pressable>
-          </View>
-        </View>
-        {/* Filter bar */}
-        <View style={{ paddingHorizontal: 0, paddingBottom: 4 }}>
-          <FilterBar
-            classes={allClasses} sections={allSections}
-            filterClass={filterClass} filterSection={filterSection}
-            onClassChange={setFilterClass} onSectionChange={setFilterSection}
-          />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ minWidth: 600, width: '100%' }}>
-            <View style={s.tableHeader}>
-              {['Name', 'Grade', 'Gate', 'Guardian ID', 'Last Distance', 'Status'].map(h => (
-                <Text key={h} style={[s.th, h === 'Name' ? { flex: 2 } : {}]}>{h}</Text>
-              ))}
-            </View>
-            <ScrollView>
-              {studentsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
-                : filtSt.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No students match this filter.</Text></View>
-                : filtSt.map(item => {
-                  const st = statusStyle(item.status);
-                  return (
-                    <View key={item.id} style={s.tableRow}>
-                      <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
-                      <Text style={s.td}>{item.grade || '—'}</Text>
-                      <Text style={s.td}>{item.gate || '—'}</Text>
-                      <Text style={[s.td, { color: MUTED }]}>{item.parent_id}</Text>
-                      <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
-                      <View style={s.td}>
-                        <View style={[s.pill, { backgroundColor: st.bg }]}>
-                          <Text style={[s.pillText, { color: st.text }]}>
-                            {item.status === 'received' ? 'Received 🏠' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })}
-            </ScrollView>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  };
-
-  const renderGuardianRoster = () => {
-    // Filter students first, then group by parent
-    const filtSt = applyFilter(students);
-    const map: Record<string, Student[]> = {};
-    filtSt.forEach(s => { if (!map[s.parent_id]) map[s.parent_id] = []; map[s.parent_id].push(s); });
-    const pairs = Object.entries(map);
-    return (
-      <View style={s.panel}>
-        <View style={s.panelHeader}>
-          <Text style={s.panelTitle}>👨‍👩‍👧 Guardian Roster</Text>
-          <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{pairs.length} guardians</Text>
-        </View>
-        {/* Filter bar */}
-        <View style={{ paddingBottom: 4 }}>
-          <FilterBar
-            classes={allClasses} sections={allSections}
-            filterClass={filterClass} filterSection={filterSection}
-            onClassChange={setFilterClass} onSectionChange={setFilterSection}
-          />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ minWidth: 600, width: '100%' }}>
-            <View style={s.tableHeader}>
-              {['Guardian ID', 'Children', 'Gates', 'Last Distance', 'Status'].map(h => (
-                <Text key={h} style={[s.th, h === 'Children' ? { flex: 2 } : {}]}>{h}</Text>
-              ))}
-            </View>
-            <ScrollView>
-              {pairs.length === 0
-                ? <View style={s.loader}><Text style={s.loaderText}>No guardians match this filter.</Text></View>
-                : pairs.map(([pid, kids]) => {
-                  const dist = kids.find(k => k.last_distance_meters != null)?.last_distance_meters;
-                  const allR = kids.every(k => k.status === 'received');
-                  const anyR = kids.some(k => k.status === 'received');
-                  const allD = kids.every(k => k.status === 'dispatched' || k.status === 'received');
-                  const anyD = kids.some(k => k.status === 'dispatched');
-                  const pillBg = allR ? '#e0e7ff' : allD ? '#d1e4ff' : anyD || anyR ? '#b7d7ff' : '#e2e2e4';
-                  const pillText = allR ? '#3730a3' : allD ? '#001d35' : anyD || anyR ? '#28496a' : '#43474d';
-                  const pillLabel = allR ? 'All Received 🏠' : allD ? 'All Dispatched' : anyD || anyR ? 'Partial' : 'Waiting';
-                  return (
-                    <View key={pid} style={s.tableRow}>
-                      <Text style={[s.td, s.tdBold]}>{pid}</Text>
-                      <View style={[s.td, { flex: 2 }]}>{kids.map(k => <Text key={k.id} style={{ fontSize: 12, color: TEXT }}>• {k.name}</Text>)}</View>
-                      <Text style={s.td}>{[...new Set(kids.map(k => k.gate))].join(', ') || '—'}</Text>
-                      <Text style={[s.td, { color: SLATE }]}>{dist != null ? `${dist}m` : '—'}</Text>
-                      <View style={s.td}>
-                        <View style={[s.pill, { backgroundColor: pillBg }]}>
-                          <Text style={[s.pillText, { color: pillText }]}>
-                            {pillLabel}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  );
-              })}
-            </ScrollView>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  };
-
-  const renderParentAccounts = () => (
-    <View style={s.panel}>
-      <View style={s.panelHeader}>
-        <Text style={s.panelTitle}>🔑 Parent Accounts</Text>
-        <View style={s.panelHeaderRight}>
-          <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{accounts.length} accounts</Text>
-          <Pressable style={s.smBtn} onPress={fetchAccounts} disabled={accountsLoading}>
-            {accountsLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Refresh</Text>}
-          </Pressable>
-          <Pressable style={[s.smBtn, { backgroundColor: SLATE }]} onPress={openAddAccount}>
-            <Text style={[s.smBtnText, { color: WHITE }]}>+ New Account</Text>
-          </Pressable>
-        </View>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ minWidth: 700, width: '100%' }}>
-          <View style={s.tableHeader}>
-            {['Parent ID', 'Full Name', 'Password', 'Phone', 'Linked Students', 'Status', 'Actions'].map(h => (
-              h === 'Password' ? (
-                <Pressable key={h} style={[s.th, { flexDirection: 'row', alignItems: 'center', gap: 4 }]} onPress={() => setShowParentPasswords(p => !p)}>
-                  <Text style={s.th}>Password</Text>
-                </Pressable>
-              ) : (
-                <Text key={h} style={[s.th, h === 'Linked Students' ? { flex: 2 } : {}]}>{h}</Text>
-              )
-            ))}
-          </View>
-          <ScrollView>
-            {accountsLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
-              : accounts.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No parent accounts. Create one above.</Text></View>
-              : accounts.map(acc => {
-                const linked = students.filter(st => st.parent_id === acc.parent_id);
-                return (
-                  <View key={acc.id} style={s.tableRow}>
-                    <Text style={[s.td, s.tdBold]}>{acc.parent_id}</Text>
-                    <Text style={s.td}>{acc.full_name}</Text>
-                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>
-                      {'•••••••• (hashed)'}
-                    </Text>
-                    <Text style={[s.td, { color: MUTED }]}>{acc.phone || '—'}</Text>
-                    <View style={[s.td, { flex: 2 }]}>
-                      {linked.length === 0
-                        ? <Text style={{ fontSize: 12, color: MUTED }}>None</Text>
-                        : linked.map(st => <Text key={st.id} style={{ fontSize: 12, color: TEXT }}>• {st.name}</Text>)
-                      }
-                    </View>
-                    <View style={s.td}>
-                      <Pressable onPress={() => handleToggleActive(acc)}>
-                        <View style={[s.pill, { backgroundColor: acc.is_active ? '#D1FAE5' : '#fee2e2' }]}>
-                          <Text style={[s.pillText, { color: acc.is_active ? '#065F46' : '#c0392b' }]}>
-                            {acc.is_active ? 'Active' : 'Inactive'}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    </View>
-                    <View style={[s.td, { flexDirection: 'row', gap: 6 }]}>
-                      <Pressable style={[s.smBtn, { backgroundColor: '#e8f0f8' }]} onPress={() => openEditAccount(acc)}>
-                        <Text style={[s.smBtnText, { color: SLATE }]}>Edit</Text>
-                      </Pressable>
-                      <Pressable style={[s.smBtn, { backgroundColor: '#fee2e2' }]} onPress={() => handleDeleteAccount(acc)}>
-                        <Text style={[s.smBtnText, { color: '#c0392b' }]}>Del</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                );
-              })}
-          </ScrollView>
-        </View>
-      </ScrollView>
-    </View>
-  );
-
-  const renderTransporters = () => (
-    <View style={s.panel}>
-      <View style={s.panelHeader}>
-        <Text style={s.panelTitle}>🛺 Rickshaw & Van Transporters</Text>
-        <View style={s.panelHeaderRight}>
-          <Text style={{ color: SLATE, fontSize: 13, fontWeight: '600' }}>{transporters.length} drivers</Text>
-          <Pressable style={s.smBtn} onPress={fetchTransporters} disabled={transportersLoading}>
-            {transportersLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Refresh</Text>}
-          </Pressable>
-          <Pressable style={[s.smBtn, { backgroundColor: '#065F46' }]} onPress={openAddTransporter}>
-            <Text style={[s.smBtnText, { color: WHITE }]}>+ New Driver</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ minWidth: 750, width: '100%' }}>
-          <View style={s.tableHeader}>
-            {['Driver ID', 'Driver Name', 'Vehicle', 'Vehicle No.', 'Password', 'Linked Parents', 'Status', 'Actions'].map(h => (
-              h === 'Password' ? (
-                <Pressable key={h} style={[s.th, { flexDirection: 'row', alignItems: 'center', gap: 4 }]} onPress={() => setShowTransporterPasswords(p => !p)}>
-                  <Text style={s.th}>Password</Text>
-                </Pressable>
-              ) : (
-                <Text key={h} style={[s.th, h === 'Linked Parents' ? { flex: 2 } : {}]}>{h}</Text>
-              )
-            ))}
-          </View>
-          <ScrollView>
-            {transportersLoading ? <View style={s.loader}><ActivityIndicator color={SLATE} /></View>
-              : transporters.length === 0 ? <View style={s.loader}><Text style={s.loaderText}>No registered transporters. Add a driver above.</Text></View>
-              : transporters.map(tr => {
-                const linkedCount = (tr.linked_parent_ids || []).length;
-                return (
-                  <View key={tr.id} style={s.tableRow}>
-                    <Text style={[s.td, s.tdBold, { color: '#065F46' }]}>{tr.driver_id}</Text>
-                    <Text style={s.td}>{tr.driver_name}</Text>
-                    <Text style={s.td}>{tr.vehicle_type}</Text>
-                    <Text style={[s.td, s.tdBold]}>{tr.vehicle_number}</Text>
-                    <Text style={[s.td, { fontFamily: 'monospace', fontSize: 12 }]}>
-                      {'•••••••• (hashed)'}
-                    </Text>
-                    <View style={[s.td, { flex: 2 }]}>
-                      {linkedCount === 0
-                        ? <Text style={{ fontSize: 12, color: MUTED }}>None linked</Text>
-                        : <Text style={{ fontSize: 12, color: TEXT }}>{(tr.linked_parent_ids || []).join(', ')} ({linkedCount} parents)</Text>
-                      }
-                    </View>
-                    <View style={s.td}>
-                      <Pressable onPress={() => handleToggleTransporterActive(tr)}>
-                        <View style={[s.pill, { backgroundColor: tr.is_active ? '#D1FAE5' : '#fee2e2' }]}>
-                          <Text style={[s.pillText, { color: tr.is_active ? '#065F46' : '#c0392b' }]}>
-                            {tr.is_active ? 'Active' : 'Inactive'}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    </View>
-                    <View style={[s.td, { flexDirection: 'row', gap: 6 }]}>
-                      <Pressable style={[s.smBtn, { backgroundColor: '#e8f0f8' }]} onPress={() => openEditTransporter(tr)}>
-                        <Text style={[s.smBtnText, { color: SLATE }]}>Edit</Text>
-                      </Pressable>
-                      <Pressable style={[s.smBtn, { backgroundColor: '#fee2e2' }]} onPress={() => handleDeleteTransporter(tr)}>
-                        <Text style={[s.smBtnText, { color: '#c0392b' }]}>Del</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                );
-              })}
-          </ScrollView>
-        </View>
-      </ScrollView>
-    </View>
-  );
-
-  const renderGeofenceConfig = () => (
-    <View style={s.panel}>
-      <View style={s.panelHeader}>
-        <Text style={s.panelTitle}>🗺️ Geofence Configuration</Text>
-      </View>
-      <View style={{ padding: 24, gap: 20 }}>
-        <View style={{ gap: 8 }}>
-          <Text style={s.th}>SCHOOL GATE COORDINATES</Text>
-          <View style={{ flexDirection: 'row', gap: 16 }}>
-            <View style={s.coordBox}><Text style={s.coordLabel}>LATITUDE</Text><Text style={s.coordValue}>{schoolLocation.lat.toFixed(6)}</Text></View>
-            <View style={s.coordBox}><Text style={s.coordLabel}>LONGITUDE</Text><Text style={s.coordValue}>{schoolLocation.lng.toFixed(6)}</Text></View>
-          </View>
-        </View>
-        <View style={{ gap: 8 }}>
-          <Text style={s.th}>DETECTION RADIUS</Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ fontSize: 12, color: MUTED }}>50m</Text>
-            <Text style={{ fontSize: 22, fontWeight: '800', color: SLATE }}>{tempRadius}m</Text>
-            <Text style={{ fontSize: 12, color: MUTED }}>500m</Text>
-          </View>
-          {Platform.OS === 'web' ? (
-            // @ts-ignore
-            <input type="range" min="50" max="500" value={tempRadius}
-              onChange={(e: any) => setTempRadius(Number(e.target.value))}
-              style={{ width: '100%', accentColor: SLATE, cursor: 'pointer' }} />
-          ) : (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-              {[50, 100, 150, 200, 300, 500].map(v => (
-                <Pressable key={v} style={[s.chip, tempRadius === v && s.chipActive]} onPress={() => setTempRadius(v)}>
-                  <Text style={[s.chipText, tempRadius === v && { color: WHITE }]}>{v}m</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
-        <Pressable style={s.mapBtn} onPress={() => setIsMapOpen(true)}>
-          <Text style={s.mapBtnText}>📍 Change School Gate Pin on Map</Text>
-        </Pressable>
-        {Platform.OS === 'web' && (
-          <View style={{ height: 300, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: BORDER }}>
-            {/* @ts-ignore */}
-            <iframe srcDoc={`<!DOCTYPE html><html><head>
-              <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-              <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-              <style>body,html,#map{margin:0;padding:0;height:100%;width:100%;}</style>
-            </head><body><div id="map"></div><script>
-              const m=L.map('map').setView([${schoolLocation.lat},${schoolLocation.lng}],15);
-              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(m);
-              L.marker([${schoolLocation.lat},${schoolLocation.lng}]).addTo(m).bindPopup('School Gate').openPopup();
-              L.circle([${schoolLocation.lat},${schoolLocation.lng}],{radius:${geofenceRadius},color:'${SLATE}',fillOpacity:0.15}).addTo(m);
-            </script></body></html>`}
-              style={{ width: '100%', height: '100%', border: 'none' }} />
-          </View>
-        )}
-        <Pressable style={[s.saveBtn, radiusSaved && { backgroundColor: '#10B981' }]} onPress={saveGeofenceRadius}>
-          <Text style={s.saveBtnText}>{radiusSaved ? '✅ Saved!' : '💾 Save Configuration'}</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-
-  const renderDispatchLogs = () => {
-    const sorted = [...applyFilter(students)].sort((a, b) => {
-      const o: Record<string, number> = { dispatched: 0, arrived: 1, waiting: 2 };
-      return (o[a.status] ?? 3) - (o[b.status] ?? 3);
-    });
-    return (
-      <View style={s.panel}>
-        <View style={s.panelHeader}>
-          <Text style={s.panelTitle}>📋 Dispatch Logs</Text>
-          <Pressable style={s.smBtn} onPress={handleResetDemo} disabled={resetLoading}>
-            {resetLoading ? <ActivityIndicator size="small" color={SLATE} /> : <Text style={s.smBtnText}>🔄 Reset All</Text>}
-          </Pressable>
-        </View>
-        {/* Filter bar */}
-        <View style={{ paddingBottom: 4 }}>
-          <FilterBar
-            classes={allClasses} sections={allSections}
-            filterClass={filterClass} filterSection={filterSection}
-            onClassChange={setFilterClass} onSectionChange={setFilterSection}
-          />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ minWidth: 650, width: '100%' }}>
-            <View style={s.tableHeader}>
-              {['Time', 'Student', 'Grade', 'Guardian', 'Gate', 'Distance', 'Status'].map(h => (
-                <Text key={h} style={[s.th, h === 'Student' ? { flex: 2 } : {}]}>{h}</Text>
-              ))}
-            </View>
-            <ScrollView>
-              {sorted.length === 0
-                ? <View style={s.loader}><Text style={s.loaderText}>No dispatch records match this filter.</Text></View>
-                : sorted.map(item => {
-                const st = statusStyle(item.status);
-                return (
-                  <View key={item.id} style={s.tableRow}>
-                    <Text style={[s.td, { color: MUTED }]}>
-                      {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </Text>
-                    <Text style={[s.td, s.tdBold, { flex: 2 }]}>{item.name}</Text>
-                    <Text style={[s.td, { color: MUTED, fontSize: 11 }]}>{item.grade || '—'}</Text>
-                    <Text style={s.td}>{item.parent_id}</Text>
-                    <Text style={s.td}>{item.gate || '—'}</Text>
-                    <Text style={[s.td, { color: SLATE }]}>{item.last_distance_meters != null ? `${item.last_distance_meters}m` : '—'}</Text>
-                    <View style={s.td}>
-                      <View style={[s.pill, { backgroundColor: st.bg }]}>
-                        <Text style={[s.pillText, { color: st.text }]}>{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Text>
-                      </View>
-                    </View>
-                  </View>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  };
 
   // ─── System Test Runner ─────────────────────────────────────────────
   const runAllTests = async () => {
@@ -1412,601 +667,521 @@ export default function AdminPortal() {
     });
 
     const total = passed + failed + warned;
-    setTestSummary(`${total} tests: ✅ ${passed} passed  ⚠️ ${warned} warnings  ❌ ${failed} failed`);
+    setTestSummary(`${total} checks · ${passed} passed · ${warned} warnings · ${failed} failed`);
     setTestResults(results);
     setTestRunning(false);
   };
 
-  const renderTestLogs = () => (
-    <View style={s.panel}>
-      <View style={s.panelHeader}>
-        <Text style={s.panelTitle}>🧪 System Tests</Text>
-        <Pressable style={[s.smBtn, { backgroundColor: SLATE }]} onPress={runAllTests} disabled={testRunning}>
-          {testRunning
-            ? <ActivityIndicator size="small" color={WHITE} />
-            : <Text style={[s.smBtnText, { color: WHITE }]}>▶ Run All Tests</Text>}
-        </Pressable>
-      </View>
+  // ─── Sign-in ──────────────────────────────────────────────────────────────
+  if (!session) {
+    return (
+      <AuthLayout
+        title="Staff sign in"
+        subtitle="Use the username and password created for you by the school or platform administrator."
+        onBack={() => router.replace('/')}
+      >
+        {loginError ? <Notice tone="error">{loginError}</Notice> : null}
+        <TextField label="Username" placeholder="e.g. branch1_admin" value={loginUser} onChangeText={setLoginUser}
+          autoComplete="username" returnKeyType="next" />
+        <PasswordField label="Password" value={loginPw} onChangeText={setLoginPw} onSubmitEditing={handlePinLogin} returnKeyType="go" />
+        <Button label="Sign in" size="lg" full loading={loginLoading} onPress={handlePinLogin} />
+      </AuthLayout>
+    );
+  }
 
-      {testSummary ? (
-        <View style={{
-          margin: 12, padding: 12, borderRadius: 10,
-          backgroundColor: testResults.some(r => r.status === 'fail') ? '#fdecea' : testResults.some(r => r.status === 'warn') ? '#fffbeb' : '#ecfdf5',
-          borderLeftWidth: 4,
-          borderLeftColor: testResults.some(r => r.status === 'fail') ? '#c0392b' : testResults.some(r => r.status === 'warn') ? '#f59e0b' : '#10B981',
-        }}>
-          <Text style={{ fontWeight: '700', fontSize: 14 }}>{testSummary}</Text>
-        </View>
+  // ─── Campus chooser (admins with several campuses) ────────────────────────
+  if (!branchId) {
+    return (
+      <AuthLayout title="Choose a campus" subtitle={`Signed in as ${session.fullName || session.username}.`}
+        onBack={handleLogout} backLabel="Sign out">
+        {session.branches.length === 0 ? (
+          <Notice tone="info">No campuses are assigned to this account yet.</Notice>
+        ) : (
+          <Card padded={false}>
+            {session.branches.map((b, i) => (
+              <Pressable key={b.branch_id} onPress={() => selectBranch(b.branch_id)} accessibilityRole="button"
+                style={({ pressed, hovered }: any) => [
+                  { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
+                  i > 0 && { borderTopWidth: 1, borderTopColor: color.border },
+                  (pressed || hovered) && { backgroundColor: color.sunken },
+                ]}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[type.body, { fontWeight: '600', color: color.ink }]} numberOfLines={1}>{b.school_name}</Text>
+                  <Text style={type.small} numberOfLines={1}>{b.branch_name} · {b.branch_code}</Text>
+                </View>
+                {b.status !== 'active' ? <Pill label={b.status === 'paused' ? 'Paused' : 'Archived'} fg={color.warn} bg={color.warnSoft} /> : null}
+                <ChevronRight size={18} color={color.faint} strokeWidth={2} />
+              </Pressable>
+            ))}
+          </Card>
+        )}
+      </AuthLayout>
+    );
+  }
+
+  if (branchLoading) return <Loading />;
+
+  // Campus admins are locked out of a paused campus; owners / super admins can still manage it.
+  if (session.role === 'branch' && !branchLive) {
+    return <PausedNotice branch={branch} onExit={handleLogout} />;
+  }
+
+  // ─── Data helpers ─────────────────────────────────────────────────────────
+  // Parse "Grade 5-A" → { cls: '5', sec: 'A' }
+  const parseGrade = (grade?: string | null) => {
+    if (!grade) return { cls: '', sec: '' };
+    const m = grade.match(/(\d+)-([A-Za-z]+)/);
+    return m ? { cls: m[1], sec: m[2].toUpperCase() } : { cls: '', sec: '' };
+  };
+
+  const allClasses = [...new Set(students.map(x => parseGrade(x.grade).cls).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  const allSections = [...new Set(
+    students.filter(x => !filterClass || parseGrade(x.grade).cls === filterClass).map(x => parseGrade(x.grade).sec).filter(Boolean),
+  )].sort();
+
+  const q = searchQuery.trim().toLowerCase();
+  const applyFilter = (list: Student[]) => list.filter(x => {
+    const { cls, sec } = parseGrade(x.grade);
+    return (!filterClass || cls === filterClass)
+      && (!filterSection || sec === filterSection)
+      && (!q || x.name?.toLowerCase().includes(q) || x.parent_id?.toLowerCase().includes(q) || x.grade?.toLowerCase().includes(q));
+  });
+
+  const order: Record<string, number> = { dispatched: 0, arrived: 1, waiting: 2, received: 3 };
+  const byStatus = (list: Student[]) => [...list].sort((a, b) => (order[a.status] ?? 4) - (order[b.status] ?? 4) || a.name.localeCompare(b.name));
+
+  const waitingCount = students.filter(x => x.status === 'waiting').length;
+  const dispatchedCount = students.filter(x => x.status === 'dispatched' || x.status === 'arrived').length;
+  const receivedCount = students.filter(x => x.status === 'received').length;
+  const activeParents = accounts.filter(a => a.is_active).length;
+  const syncText = lastSync
+    ? `Updated ${lastSync.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+    : 'Loading…';
+  const distanceText = (m?: number | null) => (m != null ? `${m} m` : '—');
+
+  const navigate = (id: string) => { setActiveNav(id as NavSection); setSearchQuery(''); };
+
+  const nav: NavItem[] = [
+    { id: 'dashboard', label: 'Dashboard', Icon: LayoutDashboard, group: 'Today', primary: true },
+    { id: 'logs', label: 'Dispatch log', Icon: ClipboardList, group: 'Today' },
+    { id: 'students', label: 'Students', Icon: GraduationCap, group: 'People', primary: true },
+    { id: 'guardians', label: 'Guardians', Icon: UsersRound, group: 'People' },
+    { id: 'accounts', label: 'Parent accounts', Icon: KeyRound, group: 'People', primary: true },
+    { id: 'transporters', label: 'Drivers', Icon: Bus, group: 'People', primary: true },
+    { id: 'geofence', label: 'Geofence', Icon: MapPinned, group: 'Campus' },
+    { id: 'tests', label: 'System tests', Icon: FlaskConical, group: 'Campus' },
+  ];
+
+  const footer = [
+    ...(session.role !== 'branch' ? [{ label: 'Back to Super Admin', Icon: Landmark, onPress: backToSuperAdmin }] : []),
+    ...(session.branches.length > 1 ? [{ label: 'Switch campus', Icon: ArrowLeftRight, onPress: () => selectBranch(null) }] : []),
+    { label: 'Sign out', Icon: LogOut, onPress: handleLogout },
+  ];
+
+  const roleLabel = session.role === 'owner' ? 'Platform owner' : session.role === 'super' ? 'Super admin' : 'Campus admin';
+
+  // ─── Shared pieces ────────────────────────────────────────────────────────
+  const renderFilters = () => (
+    <View style={{ gap: space.sm }}>
+      <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="Search by name, guardian or grade" />
+      {allClasses.length > 0 ? (
+        <ChipRow label="Class" value={filterClass} onChange={k => { setFilterClass(k); setFilterSection(''); }}
+          options={[{ key: '', label: 'All' }, ...allClasses.map(c => ({ key: c, label: `Grade ${c}` }))]} />
       ) : null}
-
-      {testResults.length === 0 && !testRunning ? (
-        <View style={s.loader}>
-          <Text style={{ fontSize: 32 }}>🧪</Text>
-          <Text style={s.loaderText}>Press "Run All Tests" to execute the full test suite.</Text>
-          <Text style={[s.loaderText, { fontSize: 12, color: MUTED, marginTop: 4 }]}>
-            Covers Whitebox, Greybox, Blackbox and Responsiveness checks.
-          </Text>
-        </View>
+      {filterClass && allSections.length > 0 ? (
+        <ChipRow label="Section" value={filterSection} onChange={setFilterSection}
+          options={[{ key: '', label: 'All' }, ...allSections.map(x => ({ key: x, label: x }))]} />
       ) : null}
-
-      {/* Group by category */}
-      {[...new Set(testResults.map(r => r.category))].map(cat => (
-        <View key={cat} style={{ marginBottom: 12 }}>
-          <Text style={[s.th, { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6, fontSize: 10 }]}>{cat.toUpperCase()}</Text>
-          {testResults.filter(r => r.category === cat).map(r => (
-            <View key={r.id} style={[s.tableRow, { alignItems: 'flex-start', gap: 0 }]}>
-              <Text style={{ fontSize: 16, marginTop: 1, minWidth: 22 }}>
-                {r.status === 'pass' ? '✅' : r.status === 'fail' ? '❌' : r.status === 'warn' ? '⚠️' : '⏳'}
-              </Text>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: TEXT }}>{r.name}</Text>
-                <Text style={{ fontSize: 12, color: MUTED }}>{r.detail}</Text>
-              </View>
-              {r.durationMs != null && (
-                <Text style={{ fontSize: 11, color: MUTED, alignSelf: 'flex-start', marginTop: 2 }}>{r.durationMs}ms</Text>
-              )}
-            </View>
-          ))}
-        </View>
-      ))}
     </View>
   );
 
+  const statusCell = (r: Student) => <StatusPill status={r.status} />;
+
+  const studentColumns = (withSend: boolean): Column<Student>[] => [
+    { key: 'name', title: 'Student', role: 'primary', flex: 2, render: r => <Cell strong>{r.name}</Cell> },
+    { key: 'grade', title: 'Grade', render: r => <Cell>{r.grade || '—'}</Cell> },
+    { key: 'gate', title: 'Gate', render: r => <Cell>{r.gate || '—'}</Cell> },
+    { key: 'guardian', title: 'Guardian', render: r => <Cell muted>{r.parent_id}</Cell> },
+    { key: 'distance', title: 'Distance', render: r => <Cell muted mono>{distanceText(r.last_distance_meters)}</Cell> },
+    { key: 'status', title: 'Status', role: 'badge', render: statusCell },
+    ...(withSend ? [{
+      key: 'send', title: 'Action', role: 'actions' as const, flex: 1.3,
+      render: (r: Student) => (r.status === 'waiting'
+        ? <Button label="Send to gate" size="sm" variant="secondary" icon={Send} onPress={() => handleDispatch(r.id)} />
+        : null),
+    }] : []),
+  ];
+
+  const resetButton = (
+    <Button label="Reset all to waiting" size="sm" variant="secondary" icon={RotateCcw} loading={resetLoading} onPress={handleResetDemo} />
+  );
+
+  const ActiveBadge = ({ active }: { active: boolean }) => (
+    <Pill label={active ? 'Active' : 'Inactive'} fg={active ? color.done : color.muted} bg={active ? color.doneSoft : color.waitingSoft} />
+  );
+
+  // ─── Pages ────────────────────────────────────────────────────────────────
+  const renderDashboard = () => {
+    const queue = byStatus(applyFilter(students)).filter(x => x.status !== 'received');
+    return (
+      <>
+        <PageHeader title="Dashboard" description={`${syncText} · updates automatically`} actions={resetButton} />
+        <KpiRow>
+          <Kpi label="Students" value={studentsLoading ? '…' : students.length} hint={branch ? branch.name : undefined} />
+          <Kpi label="In class" value={waitingCount} hint="Not yet called" />
+          <Kpi label="Sent to gate" value={dispatchedCount} hint="Waiting for pickup" tone="sent" />
+          <Kpi label="Picked up" value={receivedCount} hint="Collected today" tone="done" />
+          <Kpi label="Parent accounts" value={accountsLoading ? '…' : accounts.length} hint={`${activeParents} active`} />
+        </KpiRow>
+        <View style={{ gap: space.sm }}>
+          <Text style={type.heading}>Pickup queue</Text>
+          {renderFilters()}
+        </View>
+        <DataTable
+          columns={studentColumns(true)} rows={queue} keyOf={r => r.id} loading={studentsLoading} minWidth={780}
+          empty={{ title: students.length === 0 ? 'No students yet' : 'Nobody left to pick up', body: students.length === 0 ? 'Add students under People → Students.' : 'Everyone matching this filter has been collected, or nothing matches.' }}
+        />
+      </>
+    );
+  };
+
+  const renderLogs = () => (
+    <>
+      <PageHeader title="Dispatch log" description="Every student’s current status. Sent-to-gate students come first." actions={resetButton} />
+      {renderFilters()}
+      <DataTable
+        columns={studentColumns(false)} rows={byStatus(applyFilter(students))} keyOf={r => r.id} loading={studentsLoading} minWidth={760}
+        empty={{ title: 'No matching students', body: 'Try a different class, section or search.' }}
+      />
+    </>
+  );
+
+  const renderStudents = () => {
+    const rows = applyFilter(students).sort((a, b) => a.name.localeCompare(b.name));
+    return (
+      <>
+        <PageHeader title="Students" description={`${rows.length} of ${students.length} shown`}
+          actions={<Button label="Add student" size="sm" icon={Plus} onPress={() => { setNsError(''); setAddStudentOpen(true); }} />} />
+        {renderFilters()}
+        <DataTable
+          columns={studentColumns(false)} rows={rows} keyOf={r => r.id} loading={studentsLoading} minWidth={760}
+          empty={{ title: students.length === 0 ? 'No students yet' : 'No matching students', body: students.length === 0 ? 'Add the first student to get started.' : 'Try a different class, section or search.' }}
+        />
+      </>
+    );
+  };
+
+  const renderGuardians = () => {
+    const map: Record<string, Student[]> = {};
+    applyFilter(students).forEach(x => { (map[x.parent_id] ||= []).push(x); });
+    const rows = Object.entries(map).map(([pid, kids]) => ({ pid, kids }));
+    type Row = typeof rows[number];
+    const cols: Column<Row>[] = [
+      { key: 'pid', title: 'Guardian', role: 'primary', render: r => <Cell strong>{r.pid}</Cell> },
+      { key: 'kids', title: 'Children', flex: 2, render: r => <Cell>{r.kids.map(k => k.name).join(', ')}</Cell> },
+      { key: 'gates', title: 'Gates', render: r => <Cell>{[...new Set(r.kids.map(k => k.gate).filter(Boolean))].join(', ') || '—'}</Cell> },
+      { key: 'dist', title: 'Distance', render: r => <Cell muted mono>{distanceText(r.kids.find(k => k.last_distance_meters != null)?.last_distance_meters)}</Cell> },
+      {
+        key: 'status', title: 'Status', role: 'badge', render: r => {
+          const all = (st: string) => r.kids.every(k => k.status === st);
+          const any = (st: string) => r.kids.some(k => k.status === st);
+          if (all('received')) return <StatusPill status="received" />;
+          if (any('dispatched') || any('arrived')) return <StatusPill status="dispatched" />;
+          if (any('received')) return <Pill label="Partly picked up" fg={color.done} bg={color.doneSoft} />;
+          return <StatusPill status="waiting" />;
+        },
+      },
+    ];
+    return (
+      <>
+        <PageHeader title="Guardians" description={`${rows.length} guardians with children on this campus`} />
+        {renderFilters()}
+        <DataTable columns={cols} rows={rows} keyOf={r => r.pid} loading={studentsLoading} minWidth={720}
+          empty={{ title: 'No matching guardians', body: 'Try a different class, section or search.' }} />
+      </>
+    );
+  };
+
+  const renderAccounts = () => {
+    const rows = accounts.filter(a => !q || a.parent_id.toLowerCase().includes(q) || a.full_name.toLowerCase().includes(q) || (a.phone || '').includes(q));
+    const cols: Column<ParentAccount>[] = [
+      { key: 'name', title: 'Parent', role: 'primary', flex: 1.6, render: a => (<View><Cell strong>{a.full_name}</Cell><Text style={type.small}>{a.parent_id}</Text></View>) },
+      { key: 'phone', title: 'Phone', render: a => <Cell muted>{a.phone || '—'}</Cell> },
+      { key: 'kids', title: 'Children', flex: 2, render: a => <Cell>{students.filter(st => st.parent_id === a.parent_id).map(st => st.name).join(', ') || 'None linked'}</Cell> },
+      { key: 'status', title: 'Status', role: 'badge', render: a => <ActiveBadge active={a.is_active} /> },
+      {
+        key: 'actions', title: 'Actions', role: 'actions', flex: 1.2, render: a => (
+          <>
+            <IconButton Icon={Power} label={a.is_active ? 'Deactivate account' : 'Activate account'} onPress={() => handleToggleActive(a)} />
+            <IconButton Icon={Pencil} label="Edit account" onPress={() => openEditAccount(a)} />
+            <IconButton Icon={Trash2} label="Delete account" tone="danger" onPress={() => handleDeleteAccount(a)} />
+          </>
+        ),
+      },
+    ];
+    return (
+      <>
+        <PageHeader title="Parent accounts" description={`${accounts.length} accounts · ${activeParents} active. Passwords are stored hashed and can only be reset.`}
+          actions={<Button label="New account" size="sm" icon={Plus} onPress={openAddAccount} />} />
+        <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="Search by name, ID or phone" />
+        <DataTable columns={cols} rows={rows} keyOf={a => a.id} loading={accountsLoading} minWidth={760}
+          empty={{ title: accounts.length === 0 ? 'No parent accounts yet' : 'No matching accounts', body: accounts.length === 0 ? 'Create an account so a parent can sign in.' : undefined }} />
+      </>
+    );
+  };
+
+  const renderTransporters = () => {
+    const rows = transporters.filter(t => !q || t.driver_id.toLowerCase().includes(q) || t.driver_name.toLowerCase().includes(q) || t.vehicle_number.toLowerCase().includes(q));
+    const cols: Column<TransporterAccount>[] = [
+      { key: 'name', title: 'Driver', role: 'primary', flex: 1.6, render: t => (<View><Cell strong>{t.driver_name}</Cell><Text style={type.small}>{t.driver_id}</Text></View>) },
+      { key: 'vehicle', title: 'Vehicle', flex: 1.3, render: t => <Cell>{t.vehicle_type} · {t.vehicle_number}</Cell> },
+      { key: 'families', title: 'Families', flex: 2, render: t => <Cell muted>{(t.linked_parent_ids || []).length ? `${t.linked_parent_ids.length} · ${t.linked_parent_ids.join(', ')}` : 'None linked'}</Cell> },
+      { key: 'status', title: 'Status', role: 'badge', render: t => <ActiveBadge active={t.is_active} /> },
+      {
+        key: 'actions', title: 'Actions', role: 'actions', flex: 1.2, render: t => (
+          <>
+            <IconButton Icon={Power} label={t.is_active ? 'Deactivate driver' : 'Activate driver'} onPress={() => handleToggleTransporterActive(t)} />
+            <IconButton Icon={Pencil} label="Edit driver" onPress={() => openEditTransporter(t)} />
+            <IconButton Icon={Trash2} label="Delete driver" tone="danger" onPress={() => handleDeleteTransporter(t)} />
+          </>
+        ),
+      },
+    ];
+    return (
+      <>
+        <PageHeader title="Drivers" description={`${transporters.length} drivers. Each driver collects the families linked to them.`}
+          actions={<Button label="New driver" size="sm" icon={Plus} onPress={openAddTransporter} />} />
+        <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="Search by name, ID or vehicle number" />
+        <DataTable columns={cols} rows={rows} keyOf={t => t.id} loading={transportersLoading} minWidth={800}
+          empty={{ title: transporters.length === 0 ? 'No drivers yet' : 'No matching drivers', body: transporters.length === 0 ? 'Add a driver and link the families they collect.' : undefined }} />
+      </>
+    );
+  };
+
+  const renderGeofence = () => {
+    const dirty = tempRadius !== geofenceRadius;
+    const coord = (label: string, v: number) => (
+      <View style={{ flex: 1, backgroundColor: color.sunken, borderRadius: radius.md, padding: space.md, gap: 2 }}>
+        <Text style={type.small}>{label}</Text>
+        <Text style={[type.body, { color: color.ink, fontVariant: ['tabular-nums'] }]}>{v.toFixed(6)}</Text>
+      </View>
+    );
+    return (
+      <>
+        <PageHeader title="Geofence" description="Where the school gate is, and how close a parent or driver must be to check in." />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, alignItems: 'flex-start' }}>
+          <Card style={{ flexGrow: 1, flexBasis: 340, gap: space.lg }}>
+            <View style={{ gap: 2 }}>
+              <Text style={type.heading}>Gate location</Text>
+              <Text style={type.small}>Check-in distance is measured from this point.</Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: space.md }}>
+              {coord('Latitude', schoolLocation.lat)}
+              {coord('Longitude', schoolLocation.lng)}
+            </View>
+            <View style={{ alignItems: 'flex-start' }}>
+              <Button label="Move pin on map" variant="secondary" icon={MapPin} onPress={() => setIsMapOpen(true)} />
+            </View>
+            {Platform.OS === 'web' ? (
+              <View style={{ height: 260, borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: color.border }}>
+                {/* @ts-ignore */}
+                <iframe title="Gate location" srcDoc={`<!DOCTYPE html><html><head>
+                  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+                  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                  <style>body,html,#map{margin:0;padding:0;height:100%;width:100%;}</style>
+                </head><body><div id="map"></div><script>
+                  const m=L.map('map').setView([${schoolLocation.lat},${schoolLocation.lng}],15);
+                  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(m);
+                  L.marker([${schoolLocation.lat},${schoolLocation.lng}]).addTo(m);
+                  L.circle([${schoolLocation.lat},${schoolLocation.lng}],{radius:${tempRadius},color:'${color.accent}',fillOpacity:0.15}).addTo(m);
+                </script></body></html>`}
+                  style={{ width: '100%', height: '100%', border: 'none' }} />
+              </View>
+            ) : null}
+          </Card>
+
+          <Card style={{ flexGrow: 1, flexBasis: 300, gap: space.lg }}>
+            <View style={{ gap: 2 }}>
+              <Text style={type.heading}>Pickup radius</Text>
+              <Text style={type.small}>Parents and drivers can check in only inside this distance.</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+              <Text style={{ fontSize: 44, lineHeight: 50, fontWeight: '700', color: color.ink, letterSpacing: -1, fontVariant: ['tabular-nums'] }}>{tempRadius}</Text>
+              <Text style={[type.heading, { color: color.muted, fontWeight: '500' }]}>m</Text>
+            </View>
+            {Platform.OS === 'web' ? (
+              <View>
+                {/* @ts-ignore */}
+                <input type="range" min="50" max="500" step="10" value={tempRadius} aria-label="Pickup radius in metres"
+                  onChange={(e: any) => setTempRadius(Number(e.target.value))}
+                  style={{ width: '100%', accentColor: color.accent, cursor: 'pointer' }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={type.small}>50 m</Text><Text style={type.small}>500 m</Text>
+                </View>
+              </View>
+            ) : (
+              <ChipRow value={String(tempRadius)} onChange={k => setTempRadius(Number(k))}
+                options={[50, 100, 150, 200, 300, 500].map(v => ({ key: String(v), label: `${v} m` }))} />
+            )}
+            <Button label={dirty ? 'Save radius' : 'Saved'} disabled={!dirty} onPress={saveGeofenceRadius} />
+          </Card>
+        </View>
+      </>
+    );
+  };
+
+  const renderTests = () => {
+    const failed = testResults.filter(r => r.status === 'fail').length;
+    const warned = testResults.filter(r => r.status === 'warn').length;
+    return (
+      <>
+        <PageHeader title="System tests" description="Checks that this campus’s data, sign-ins and data isolation are working."
+          actions={<Button label={testRunning ? 'Running…' : 'Run all checks'} size="sm" icon={Play} loading={testRunning} onPress={runAllTests} />} />
+        {testSummary ? <Notice tone={failed ? 'error' : warned ? 'warn' : 'success'}>{testSummary}</Notice> : null}
+        {testResults.length === 0 && !testRunning ? (
+          <Card><Text style={type.body}>Press “Run all checks” to test this campus.</Text></Card>
+        ) : null}
+        {[...new Set(testResults.map(r => r.category))].map(cat => (
+          <View key={cat} style={{ gap: space.sm }}>
+            <Text style={type.overline}>{cat}</Text>
+            <Card padded={false}>
+              {testResults.filter(r => r.category === cat).map((r, i) => {
+                const Icon = r.status === 'pass' ? CircleCheck : r.status === 'fail' ? CircleAlert : TriangleAlert;
+                const fg = r.status === 'pass' ? color.done : r.status === 'fail' ? color.danger : color.warn;
+                return (
+                  <View key={r.id} style={[{ flexDirection: 'row', gap: space.md, padding: space.md + 2, alignItems: 'flex-start' }, i > 0 && { borderTopWidth: 1, borderTopColor: color.border }]}>
+                    <Icon size={18} color={fg} strokeWidth={2} style={{ marginTop: 1 }} />
+                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                      <Text style={[type.body, { fontWeight: '600', color: color.ink }]}>{r.name}</Text>
+                      <Text style={type.small}>{r.detail}</Text>
+                    </View>
+                    {r.durationMs != null ? <Text style={type.small}>{r.durationMs} ms</Text> : null}
+                  </View>
+                );
+              })}
+            </Card>
+          </View>
+        ))}
+      </>
+    );
+  };
 
   const renderContent = () => {
     switch (activeNav) {
-      case 'students': return renderStudentDirectory();
-      case 'guardians': return renderGuardianRoster();
-      case 'geofence': return renderGeofenceConfig();
-      case 'logs': return renderDispatchLogs();
-      case 'accounts': return renderParentAccounts();
+      case 'students': return renderStudents();
+      case 'guardians': return renderGuardians();
+      case 'geofence': return renderGeofence();
+      case 'logs': return renderLogs();
+      case 'accounts': return renderAccounts();
       case 'transporters': return renderTransporters();
-      case 'tests': return renderTestLogs();
+      case 'tests': return renderTests();
       default: return renderDashboard();
     }
   };
 
-  return (
-    <View style={s.shell}>
-      {/* Sidebar - hidden on mobile screens */}
-      {!isMobile && (
-        <View style={s.sidebar}>
-          <View style={s.sidebarLogo}>
-            <View style={s.logoCircle}><Text style={{ fontSize: 18 }}>🛡️</Text></View>
-            <View>
-              <Text style={s.logoTitle}>SafePass</Text>
-              <Text style={s.logoSub}>Admin Portal</Text>
-              <Text style={s.logoCampus}>{branch ? `${branch.school_name} — ${branch.name}` : ''}</Text>
-            </View>
-          </View>
-          <View style={s.navLinks}>
-            {([
-              { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-              { id: 'students', label: 'Student Directory', icon: '👥' },
-              { id: 'guardians', label: 'Guardian Roster', icon: '👨‍👩‍👧' },
-              { id: 'geofence', label: 'Geofence Config', icon: '🗺️' },
-              { id: 'logs', label: 'Dispatch Logs', icon: '📋' },
-              { id: 'accounts', label: 'Parent Accounts', icon: '🔑' },
-              { id: 'transporters', label: 'Transporters', icon: '🛺' },
-              { id: 'tests', label: 'System Tests', icon: '🧪' },
-            ] as { id: NavSection; label: string; icon: string }[]).map(item => (
-              <Pressable key={item.id}
-                style={[s.navItem, activeNav === item.id && s.navItemActive]}
-                onPress={() => setActiveNav(item.id)}>
-                <Text style={s.navIcon}>{item.icon}</Text>
-                <Text style={[s.navLabel, activeNav === item.id && s.navLabelActive]}>{item.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <View style={s.sidebarBottom}>
-            {session.role !== 'branch' && (
-              <Pressable style={s.navItem} onPress={backToSuperAdmin}>
-                <Text style={s.navIcon}>🏛️</Text>
-                <Text style={s.navLabel}>Back to Super Admin</Text>
-              </Pressable>
-            )}
-            {session.branches.length > 1 && (
-              <Pressable style={s.navItem} onPress={() => selectBranch(null)}>
-                <Text style={s.navIcon}>⇄</Text>
-                <Text style={s.navLabel}>Switch Campus</Text>
-              </Pressable>
-            )}
-            <Pressable style={s.navItem} onPress={() => router.replace('/')}>
-              <Text style={s.navIcon}>🏠</Text>
-              <Text style={s.navLabel}>Back to Home</Text>
-            </Pressable>
-            <Pressable style={s.navItem} onPress={handleLogout}>
-              <Text style={s.navIcon}>🔒</Text>
-              <Text style={s.navLabel}>Sign Out</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
+  // ─── Dialog data ──────────────────────────────────────────────────────────
+  const assignedElsewhere = new Set<string>();
+  transporters.forEach(tr => {
+    if (!editTransporter || tr.id !== editTransporter.id) (tr.linked_parent_ids || []).forEach(pid => assignedElsewhere.add(pid));
+  });
+  const availableFamilies = accounts
+    .filter(a => !assignedElsewhere.has(a.parent_id) || nt_linkedParents.includes(a.parent_id))
+    .map(a => ({ key: a.parent_id, label: `${a.full_name} · ${a.parent_id}` }));
 
-      {/* Main */}
-      <View style={s.main}>
-        {/* Top Header */}
-        <View style={[s.topHeader, isMobile && { paddingHorizontal: 12, gap: 8 }]}>
-          <View style={[s.searchBarWrap, isMobile && { flex: 1, maxWidth: 180 }]}>
-            <Text>🔍 </Text>
+  const cancel = (fn: () => void) => <Button label="Cancel" variant="secondary" onPress={fn} />;
+
+  return (
+    <View style={{ flex: 1 }}>
+      <AdminShell
+        context={branch ? `${branch.school_name} — ${branch.name}` : 'Campus'}
+        contextSub={roleLabel}
+        user={session.username}
+        nav={nav}
+        active={activeNav}
+        onNavigate={navigate}
+        footer={footer}
+        banner={!branchLive ? (
+          <Notice tone="warn" title="This campus is paused">
+            Parents, drivers and campus admins are blocked until it is resumed. You can still manage it here.
+          </Notice>
+        ) : undefined}
+      >
+        {renderContent()}
+      </AdminShell>
+
+      {toast ? <Toast tone={toast.tone} text={toast.text} onClose={() => setToast(null)} /> : null}
+      {confirmState ? <ConfirmDialog options={confirmState.opts} onResult={answerConfirm} /> : null}
+
+      {isMapOpen ? (
+        <Dialog title="Move the gate pin" subtitle="Click the map to drop the pin, or drag it." onClose={() => setIsMapOpen(false)}
+          footer={(<>{cancel(() => setIsMapOpen(false))}<Button label="Save location" onPress={saveMapLocation} /></>)}>
+          <View style={{ height: 340, borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: color.border }}>
             {Platform.OS === 'web' ? (
               // @ts-ignore
-              <input style={{ ...s.searchWeb, border: 'none', background: 'transparent', outline: 'none' } as any} placeholder={isMobile ? "Search…" : "Search students or guardians…"}
-                value={searchQuery} onChange={(e: any) => setSearchQuery(e.target.value)} />
-            ) : (
-              <TextInput style={s.searchNative} placeholder="Search…" value={searchQuery}
-                onChangeText={setSearchQuery} placeholderTextColor={MUTED} />
-            )}
+              <iframe title="Choose gate location" srcDoc={`<!DOCTYPE html><html>
+                <head><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+                <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                <style>body,html,#map{margin:0;padding:0;height:100%;width:100%;}</style></head>
+                <body><div id="map"></div><script>
+                  const map=L.map('map').setView([${tempLocation.lat},${tempLocation.lng}],15);
+                  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                  let mk=L.marker([${tempLocation.lat},${tempLocation.lng}],{draggable:true}).addTo(map);
+                  function send(lat,lng){window.parent.postMessage({type:'UPDATE_LOCATION',lat,lng},'*');}
+                  mk.on('dragend',e=>{const p=e.target.getLatLng();send(p.lat,p.lng);});
+                  map.on('click',e=>{mk.setLatLng(e.latlng);send(e.latlng.lat,e.latlng.lng);});
+                </script></body></html>`}
+                style={{ width: '100%', height: '100%', border: 'none' }} />
+            ) : <Text style={[type.small, { padding: space.lg }]}>The map is only available on the web version.</Text>}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: isMobile ? 6 : 12 }}>
-            <View style={[s.gpsBadge, isMobile && { paddingHorizontal: 6, paddingVertical: 4 }]}><View style={s.gpsDot} /><Text style={[s.gpsBadgeText, isMobile && { fontSize: 10 }]}>{isMobile ? 'GPS' : 'GPS Active'}</Text></View>
-            <View style={[s.avBubble, isMobile && { width: 28, height: 28, borderRadius: 14 }]}><Text style={{ fontSize: isMobile ? 10 : 12, fontWeight: '700', color: SLATE }}>{(session.username || 'A').slice(0, 2).toUpperCase()}</Text></View>
-            <Text style={{ fontSize: isMobile ? 14 : 18, fontWeight: '700', color: SLATE }}>
-              {currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', ...(isMobile ? {} : { second: '2-digit' }) })}
-            </Text>
-          </View>
-        </View>
+          <Text style={type.small}>Selected: {tempLocation.lat.toFixed(5)}, {tempLocation.lng.toFixed(5)}</Text>
+        </Dialog>
+      ) : null}
 
-        <ScrollView style={s.canvas} contentContainerStyle={{ padding: isMobile ? 12 : 24, paddingBottom: isMobile ? 110 : 48 }}>
-          {!branchLive ? (
-            <View style={s.pausedBanner}>
-              <Text style={s.pausedBannerText}>
-                ⏸️ This campus is {branch?.status ?? 'unavailable'} — parents, drivers and branch admins are currently blocked.
-              </Text>
-            </View>
-          ) : null}
-          {isMobile && branch ? (
-            <Text style={s.mobileCampus}>{branch.school_name} — {branch.name}</Text>
-          ) : null}
-          {renderContent()}
-        </ScrollView>
-      </View>
+      {addStudentOpen ? (
+        <Dialog title="Add student" onClose={() => setAddStudentOpen(false)}
+          footer={(<>{cancel(() => setAddStudentOpen(false))}<Button label="Add student" loading={ns_loading} onPress={handleAddStudent} /></>)}>
+          {nsError ? <Notice tone="error">{nsError}</Notice> : null}
+          <TextField label="Full name" placeholder="e.g. Zara Khan" value={ns_name} onChangeText={setNs_name} autoCapitalize="words" />
+          <TextField label="Grade" placeholder="e.g. Grade 4-A" value={ns_grade} onChangeText={setNs_grade} hint="Use the format Grade 4-A so class filters work." />
+          <TextField label="Guardian ID" placeholder="e.g. parent_003" value={ns_parentId} onChangeText={setNs_parentId} />
+          <Segmented label="Pickup gate" options={['Gate A', 'Gate B', 'Gate C']} value={ns_gate} onChange={setNs_gate} />
+        </Dialog>
+      ) : null}
 
-      {/* ── Mobile Bottom Navigation (shown whenever screen is mobile width) ── */}
-      {isMobile && (
-        <View style={s.mobileBottomNav}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4, paddingHorizontal: 8 }}>
-            {([
-              { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
-              { id: 'students',   label: 'Students',   icon: '👥' },
-              { id: 'guardians',  label: 'Guardians',  icon: '👨‍👩‍👧' },
-              { id: 'geofence',   label: 'Geofence',   icon: '🗺️' },
-              { id: 'logs',       label: 'Logs',       icon: '📋' },
-              { id: 'accounts',   label: 'Accounts',   icon: '🔑' },
-              { id: 'transporters',label: 'Drivers',   icon: '🛺' },
-              { id: 'tests',      label: 'Tests',      icon: '🧪' },
-            ] as { id: NavSection; label: string; icon: string }[]).map(item => (
-              <Pressable key={item.id}
-                style={[s.mobileNavItem, activeNav === item.id && s.mobileNavItemActive]}
-                onPress={() => setActiveNav(item.id)}>
-                <Text style={{ fontSize: 18 }}>{item.icon}</Text>
-                <Text style={[s.mobileNavLabel, activeNav === item.id && { color: SLATE, fontWeight: '700' }]}>{item.label}</Text>
-              </Pressable>
-            ))}
-            <Pressable style={s.mobileNavItem} onPress={() => router.replace('/')}>
-              <Text style={{ fontSize: 18 }}>🏠</Text>
-              <Text style={s.mobileNavLabel}>Home</Text>
-            </Pressable>
-            {session.role !== 'branch' && (
-              <Pressable style={s.mobileNavItem} onPress={backToSuperAdmin}>
-                <Text style={{ fontSize: 18 }}>🏛️</Text>
-                <Text style={s.mobileNavLabel}>Super</Text>
-              </Pressable>
-            )}
-            {session.branches.length > 1 && (
-              <Pressable style={s.mobileNavItem} onPress={() => selectBranch(null)}>
-                <Text style={{ fontSize: 18 }}>⇄</Text>
-                <Text style={s.mobileNavLabel}>Campus</Text>
-              </Pressable>
-            )}
-            <Pressable style={s.mobileNavItem} onPress={handleLogout}>
-              <Text style={{ fontSize: 18 }}>🔒</Text>
-              <Text style={s.mobileNavLabel}>Sign Out</Text>
-            </Pressable>
-          </ScrollView>
-        </View>
-      )}
+      {addAccountOpen ? (
+        <Dialog title={editAccount ? 'Edit parent account' : 'New parent account'}
+          subtitle={editAccount ? undefined : 'The parent signs in with this ID and password.'}
+          onClose={() => setAddAccountOpen(false)}
+          footer={(<>{cancel(() => setAddAccountOpen(false))}<Button label={editAccount ? 'Save changes' : 'Create account'} loading={na_loading} onPress={handleSaveAccount} /></>)}>
+          {accountModalError ? <Notice tone="error">{accountModalError}</Notice> : null}
+          <TextField label="Parent ID" placeholder="e.g. parent_005" value={na_parentId} onChangeText={setNa_parentId}
+            editable={!editAccount} hint={editAccount ? 'The ID can’t be changed.' : undefined} />
+          <TextField label="Full name" placeholder="e.g. Sarah Ahmed" value={na_fullName} onChangeText={setNa_fullName} autoCapitalize="words" />
+          <PasswordField label={editAccount ? 'New password' : 'Password'} value={na_password} onChangeText={setNa_password}
+            hint={editAccount ? 'Leave blank to keep the current password.' : undefined} />
+          <TextField label="Phone (optional)" placeholder="e.g. 0300-1234567" value={na_phone} onChangeText={setNa_phone} keyboardType="phone-pad" />
+        </Dialog>
+      ) : null}
 
-      {/* Map Modal */}
-      {isMapOpen && (
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>📍 Set School Gate Location</Text>
-            <Text style={s.modalSub}>Click anywhere to drop the pin, or drag it.</Text>
-            <View style={s.mapBox}>
-              {Platform.OS === 'web' ? (
-                // @ts-ignore
-                <iframe srcDoc={`<!DOCTYPE html><html>
-                  <head><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-                  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-                  <style>body,html,#map{margin:0;padding:0;height:100%;width:100%;}</style></head>
-                  <body><div id="map"></div><script>
-                    const map=L.map('map').setView([${tempLocation.lat},${tempLocation.lng}],15);
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-                    let mk=L.marker([${tempLocation.lat},${tempLocation.lng}],{draggable:true}).addTo(map);
-                    function send(lat,lng){window.parent.postMessage({type:'UPDATE_LOCATION',lat,lng},'*');}
-                    mk.on('dragend',e=>{const p=e.target.getLatLng();send(p.lat,p.lng);});
-                    map.on('click',e=>{mk.setLatLng(e.latlng);send(e.latlng.lat,e.latlng.lng);});
-                  </script></body></html>`}
-                  style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8 }} />
-              ) : <Text style={{ textAlign: 'center', marginTop: 20, color: MUTED }}>Map only on Web.</Text>}
-            </View>
-            <Text style={{ fontSize: 12, color: MUTED, textAlign: 'center', marginBottom: 12 }}>
-              Selected: {tempLocation.lat.toFixed(5)}, {tempLocation.lng.toFixed(5)}
-            </Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-              <Pressable style={s.cancelBtn} onPress={() => setIsMapOpen(false)}><Text style={s.cancelBtnText}>Cancel</Text></Pressable>
-              <Pressable style={s.confirmBtn} onPress={saveMapLocation}><Text style={s.confirmBtnText}>Save Pin</Text></Pressable>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Add Student Modal */}
-      {addStudentOpen && (
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>👤 Add New Student</Text>
-            <View style={{ gap: 12, marginTop: 8 }}>
-              <FormField label="Full Name *" value={ns_name} setter={setNs_name} placeholder="e.g. Zara Khan" />
-              <FormField label="Grade" value={ns_grade} setter={setNs_grade} placeholder="e.g. Grade 4-A" />
-              <FormField label="Guardian ID *" value={ns_parentId} setter={setNs_parentId} placeholder="e.g. parent_003" />
-              <View>
-                <Text style={s.formLabel}>Pickup Gate</Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                  {['Gate A', 'Gate B', 'Gate C'].map(g => (
-                    <Pressable key={g} style={[s.chip, ns_gate === g && s.chipActive]} onPress={() => setNs_gate(g)}>
-                      <Text style={[s.chipText, ns_gate === g && { color: WHITE }]}>{g}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            </View>
-            <View style={[{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }]}>
-              <Pressable style={s.cancelBtn} onPress={() => setAddStudentOpen(false)}><Text style={s.cancelBtnText}>Cancel</Text></Pressable>
-              <Pressable style={[s.confirmBtn, ns_loading && { opacity: 0.7 }]} onPress={handleAddStudent} disabled={ns_loading}>
-                {ns_loading ? <ActivityIndicator size="small" color={WHITE} /> : <Text style={s.confirmBtnText}>Add Student</Text>}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Add / Edit Account Modal */}
-      {addAccountOpen && (
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>{editAccount ? '✏️ Edit Account' : '🔑 New Parent Account'}</Text>
-            <Text style={s.modalSub}>
-              {editAccount ? 'Update this parent\'s details.' : 'Create login credentials for a parent.'}
-            </Text>
-            <View style={{ gap: 12, marginTop: 8 }}>
-              {/* ── Inline error banner ── */}
-              {accountModalError ? (
-                <View style={s.errorBanner}>
-                  <Text style={s.errorText}>⚠️  {accountModalError}</Text>
-                </View>
-              ) : null}
-              <View style={{ gap: 4 }}>
-                <Text style={s.formLabel}>Parent ID *</Text>
-                {Platform.OS === 'web' ? (
-                  // @ts-ignore
-                  <input style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any}
-                    placeholder="e.g. parent_005"
-                    value={na_parentId}
-                    onChange={(e: any) => setNa_parentId(e.target.value)}
-                    disabled={!!editAccount} />
-                ) : (
-                  <TextInput style={[s.formInput, !!editAccount && { backgroundColor: '#e8e8ea' }]}
-                    placeholder="e.g. parent_005" value={na_parentId}
-                    onChangeText={setNa_parentId} editable={!editAccount} placeholderTextColor={MUTED} />
-                )}
-                {editAccount && <Text style={{ fontSize: 11, color: MUTED }}>Parent ID cannot be changed.</Text>}
-              </View>
-              <FormField label="Full Name *" value={na_fullName} setter={setNa_fullName} placeholder="e.g. Sarah Ahmed" />
-              <View style={{ gap: 4 }}>
-                <Text style={s.formLabel}>{editAccount ? 'New password (leave blank to keep)' : 'Password *'}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {Platform.OS === 'web' ? (
-                    // @ts-ignore
-                    <input style={{ ...s.formInputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
-                      type={showParentModalPw ? 'text' : 'password'}
-                      placeholder="e.g. safepass123"
-                      value={na_password}
-                      onChange={(e: any) => setNa_password(e.target.value)} />
-                  ) : (
-                    <TextInput style={[s.formInput, { flex: 1 }]}
-                      placeholder="e.g. safepass123" value={na_password}
-                      onChangeText={setNa_password} secureTextEntry={!showParentModalPw} placeholderTextColor={MUTED} />
-                  )}
-                  <Pressable style={s.eyeBtn} onPress={() => setShowParentModalPw(p => !p)}>
-                    <Text style={{ fontSize: 18 }}>{showParentModalPw ? '🙈' : '👁️'}</Text>
-                  </Pressable>
-                </View>
-              </View>
-              <FormField label="Phone (optional)" value={na_phone} setter={setNa_phone} placeholder="e.g. 0300-1234567" />
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-              <Pressable style={s.cancelBtn} onPress={() => setAddAccountOpen(false)}><Text style={s.cancelBtnText}>Cancel</Text></Pressable>
-              <Pressable style={[s.confirmBtn, na_loading && { opacity: 0.7 }]} onPress={handleSaveAccount} disabled={na_loading}>
-                {na_loading ? <ActivityIndicator size="small" color={WHITE} /> : <Text style={s.confirmBtnText}>{editAccount ? 'Save Changes' : 'Create Account'}</Text>}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Add / Edit Transporter Modal */}
-      {addTransporterOpen && (
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>{editTransporter ? '✏️ Edit Transporter Driver' : '🛺 New Transporter Driver'}</Text>
-            <Text style={s.modalSub}>
-              {editTransporter ? 'Update driver profile & parent assignments.' : 'Register a Rickshaw/Van driver & assign parent accounts.'}
-            </Text>
-            <View style={{ gap: 12, marginTop: 8 }}>
-              {transporterModalError ? (
-                <View style={s.errorBanner}>
-                  <Text style={s.errorText}>⚠️  {transporterModalError}</Text>
-                </View>
-              ) : null}
-              <View style={{ gap: 4 }}>
-                <Text style={s.formLabel}>Driver ID *</Text>
-                {Platform.OS === 'web' ? (
-                  // @ts-ignore
-                  <input style={{ ...s.formInputWeb, outline: 'none', boxSizing: 'border-box' } as any}
-                    placeholder="e.g. driver_001"
-                    value={nt_driverId}
-                    onChange={(e: any) => setNt_driverId(e.target.value)}
-                    disabled={!!editTransporter} />
-                ) : (
-                  <TextInput style={[s.formInput, !!editTransporter && { backgroundColor: '#e8e8ea' }]}
-                    placeholder="e.g. driver_001" value={nt_driverId}
-                    onChangeText={setNt_driverId} editable={!editTransporter} placeholderTextColor={MUTED} />
-                )}
-                {editTransporter && <Text style={{ fontSize: 11, color: MUTED }}>Driver ID cannot be changed.</Text>}
-              </View>
-              <FormField label="Driver Full Name *" value={nt_driverName} setter={setNt_driverName} placeholder="e.g. Afzal Khan" />
-              <View style={{ gap: 4 }}>
-                <Text style={s.formLabel}>Vehicle Type *</Text>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {['Rickshaw', 'School Van', 'Taxi/Carpool'].map(vt => (
-                    <Pressable key={vt} onPress={() => setNt_vehicleType(vt)}
-                      style={[s.filterChip, nt_vehicleType === vt && s.filterChipActive]}>
-                      <Text style={[s.filterChipTxt, nt_vehicleType === vt && s.filterChipTxtActive]}>{vt}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-              <FormField label="Vehicle Number *" value={nt_vehicleNumber} setter={setNt_vehicleNumber} placeholder="e.g. LEA-4920" />
-              <View style={{ gap: 4 }}>
-                <Text style={s.formLabel}>{editTransporter ? 'New password (leave blank to keep)' : 'Password *'}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {Platform.OS === 'web' ? (
-                    // @ts-ignore
-                    <input style={{ ...s.formInputWeb, flex: 1, outline: 'none', boxSizing: 'border-box' } as any}
-                      type={showTransporterModalPw ? 'text' : 'password'}
-                      placeholder="e.g. safepass123"
-                      value={nt_password}
-                      onChange={(e: any) => setNt_password(e.target.value)} />
-                  ) : (
-                    <TextInput style={[s.formInput, { flex: 1 }]}
-                      placeholder="e.g. safepass123" value={nt_password}
-                      onChangeText={setNt_password} secureTextEntry={!showTransporterModalPw} placeholderTextColor={MUTED} />
-                  )}
-                  <Pressable style={s.eyeBtn} onPress={() => setShowTransporterModalPw(p => !p)}>
-                    <Text style={{ fontSize: 18 }}>{showTransporterModalPw ? '🙈' : '👁️'}</Text>
-                  </Pressable>
-                </View>
-              </View>
-              <FormField label="Phone (optional)" value={nt_phone} setter={setNt_phone} placeholder="e.g. 0301-5550001" />
-
-              {/* Linked Parents Selection (hides parents already assigned to other drivers) */}
-              <View style={{ gap: 6, marginTop: 4 }}>
-                <Text style={s.formLabel}>Linked Parent Accounts ({nt_linkedParents.length} selected)</Text>
-                <Text style={{ fontSize: 11, color: MUTED }}>Unassigned parents available for pickup route:</Text>
-                <ScrollView style={{ maxHeight: 120, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: 8, backgroundColor: '#fafafa' }}>
-                  {(() => {
-                    const assignedToOthers = new Set<string>();
-                    transporters.forEach(tr => {
-                      if (!editTransporter || tr.id !== editTransporter.id) {
-                        (tr.linked_parent_ids || []).forEach(pid => assignedToOthers.add(pid));
-                      }
-                    });
-                    const available = accounts.filter(acc => !assignedToOthers.has(acc.parent_id));
-
-                    return available.length === 0 ? (
-                      <Text style={{ fontSize: 12, color: MUTED, padding: 4 }}>No unassigned parent accounts available.</Text>
-                    ) : (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                        {available.map(acc => {
-                          const isSel = nt_linkedParents.includes(acc.parent_id);
-                          return (
-                            <Pressable key={acc.parent_id}
-                              onPress={() => {
-                                if (isSel) setNt_linkedParents(p => p.filter(x => x !== acc.parent_id));
-                                else setNt_linkedParents(p => [...p, acc.parent_id]);
-                              }}
-                              style={[s.filterChip, isSel && { backgroundColor: '#065F46', borderColor: '#065F46' }]}>
-                              <Text style={[s.filterChipTxt, isSel && { color: WHITE }]}>{acc.parent_id} ({acc.full_name.split(' ')[0]})</Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-                    );
-                  })()}
-                </ScrollView>
-              </View>
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-              <Pressable style={s.cancelBtn} onPress={() => setAddTransporterOpen(false)}><Text style={s.cancelBtnText}>Cancel</Text></Pressable>
-              <Pressable style={[s.confirmBtn, { backgroundColor: '#065F46' }, nt_loading && { opacity: 0.7 }]} onPress={handleSaveTransporter} disabled={nt_loading}>
-                {nt_loading ? <ActivityIndicator size="small" color={WHITE} /> : <Text style={s.confirmBtnText}>{editTransporter ? 'Save Changes' : 'Create Driver'}</Text>}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
+      {addTransporterOpen ? (
+        <Dialog title={editTransporter ? 'Edit driver' : 'New driver'}
+          subtitle={editTransporter ? undefined : 'Register a driver and choose the families they collect.'}
+          onClose={() => setAddTransporterOpen(false)}
+          footer={(<>{cancel(() => setAddTransporterOpen(false))}<Button label={editTransporter ? 'Save changes' : 'Create driver'} loading={nt_loading} onPress={handleSaveTransporter} /></>)}>
+          {transporterModalError ? <Notice tone="error">{transporterModalError}</Notice> : null}
+          <TextField label="Driver ID" placeholder="e.g. driver_001" value={nt_driverId} onChangeText={setNt_driverId}
+            editable={!editTransporter} hint={editTransporter ? 'The ID can’t be changed.' : undefined} />
+          <TextField label="Full name" placeholder="e.g. Afzal Khan" value={nt_driverName} onChangeText={setNt_driverName} autoCapitalize="words" />
+          <Segmented label="Vehicle type" options={['Rickshaw', 'School Van', 'Taxi/Carpool']} value={nt_vehicleType} onChange={setNt_vehicleType} />
+          <TextField label="Vehicle number" placeholder="e.g. LEA-4920" value={nt_vehicleNumber} onChangeText={setNt_vehicleNumber} autoCapitalize="characters" />
+          <PasswordField label={editTransporter ? 'New password' : 'Password'} value={nt_password} onChangeText={setNt_password}
+            hint={editTransporter ? 'Leave blank to keep the current password.' : undefined} />
+          <TextField label="Phone (optional)" placeholder="e.g. 0301-5550001" value={nt_phone} onChangeText={setNt_phone} keyboardType="phone-pad" />
+          <ChipGroup label={`Families on this route (${nt_linkedParents.length})`} options={availableFamilies} selected={nt_linkedParents}
+            empty="Every parent account is already assigned to a driver."
+            onToggle={k => setNt_linkedParents(p => (p.includes(k) ? p.filter(x => x !== k) : [...p, k]))} />
+        </Dialog>
+      ) : null}
     </View>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const s = StyleSheet.create({
-  campusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: BORDER, borderRadius: 12, padding: 14, backgroundColor: SURFACE },
-  campusSchool: { fontSize: 15, fontWeight: '800', color: SLATE_DARK },
-  campusBranch: { fontSize: 12, color: MUTED, marginTop: 2 },
-  campusPaused: { fontSize: 10, fontWeight: '800', color: '#b45309', backgroundColor: '#fef3c7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  pausedBanner: { backgroundColor: '#fef3c7', borderLeftWidth: 4, borderLeftColor: '#f59e0b', borderRadius: 10, padding: 12, marginBottom: 16 },
-  pausedBannerText: { color: '#92400e', fontWeight: '700', fontSize: 13 },
-  mobileCampus: { fontSize: 12, fontWeight: '700', color: SLATE, marginBottom: 10 },
-  // PIN gate
-  pinRoot: { flex: 1, backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  pinCard: { backgroundColor: WHITE, borderRadius: 20, padding: 36, width: '100%', maxWidth: 420, gap: 16, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
-  pinLogoWrap: { width: 72, height: 72, borderRadius: 36, backgroundColor: SLATE, alignItems: 'center', justifyContent: 'center', shadowColor: SLATE, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
-  pinTitle: { fontSize: 28, fontWeight: '800', color: SLATE_DARK },
-  pinSub: { fontSize: 13, color: MUTED, textAlign: 'center' },
-  pinBtn: { backgroundColor: SLATE, borderRadius: 12, paddingVertical: 16, paddingHorizontal: 32, alignItems: 'center', alignSelf: 'stretch', shadowColor: SLATE, shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
-  pinBtnText: { color: WHITE, fontSize: 16, fontWeight: '700' },
-  backLink: { color: SLATE, fontSize: 14, fontWeight: '600' },
-  errorBanner: { backgroundColor: '#fdecea', borderRadius: 8, padding: 10, borderLeftWidth: 3, borderLeftColor: '#c0392b', alignSelf: 'stretch' },
-  errorText: { fontSize: 13, color: '#c0392b', fontWeight: '600' },
-  eyeBtn: { padding: 8 },
-
-  // Shell
-  shell: { flex: 1, flexDirection: 'row', backgroundColor: SURFACE },
-  sidebar: { width: SIDEBAR_W, backgroundColor: '#f0f2f5', borderRightWidth: 1, borderRightColor: BORDER, flexDirection: 'column' },
-  sidebarLogo: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingVertical: 22, borderBottomWidth: 1, borderBottomColor: BORDER },
-  logoCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: SLATE, alignItems: 'center', justifyContent: 'center' },
-  logoTitle: { fontSize: 20, fontWeight: '700', color: SLATE_DARK },
-  logoSub: { fontSize: 12, color: MUTED },
-  logoCampus: { fontSize: 11, color: MUTED, marginTop: 1 },
-  navLinks: { flex: 1, paddingVertical: 12, paddingHorizontal: 8, gap: 3 },
-  navItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8 },
-  navItemActive: { backgroundColor: '#b7d7ff' },
-  navIcon: { fontSize: 17, width: 24, textAlign: 'center' },
-  navLabel: { fontSize: 13, color: MUTED, fontWeight: '500' },
-  navLabelActive: { color: '#28496a', fontWeight: '700' },
-  sidebarBottom: { borderTopWidth: 1, borderTopColor: BORDER, paddingVertical: 10, paddingHorizontal: 8, gap: 3 },
-
-  main: { flex: 1, flexDirection: 'column' },
-  topHeader: {
-    backgroundColor: WHITE, borderBottomWidth: 1, borderBottomColor: BORDER,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 24, zIndex: 20,
-    height: Platform.OS === 'web' ? 60 : undefined,
-    paddingTop: Platform.OS === 'web' ? 0 : 44,
-    paddingBottom: Platform.OS === 'web' ? 0 : 10,
-  },
-  searchBarWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e8e8ea', borderRadius: 8, paddingHorizontal: 10, height: 38, width: Platform.OS === 'web' ? 320 : 180 },
-  searchWeb: { flex: 1, fontSize: 14, fontFamily: 'inherit' } as any,
-  searchNative: { flex: 1, fontSize: 14, color: TEXT },
-  gpsBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#b7d7ff', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, gap: 6 },
-  gpsDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#10B981' },
-  gpsBadgeText: { fontSize: 11, fontWeight: '600', color: '#28496a' },
-  avBubble: { width: 34, height: 34, borderRadius: 17, backgroundColor: SLATE_LIGHT, alignItems: 'center', justifyContent: 'center' },
-  canvas: { flex: 1, padding: 24 },
-
-  // KPI
-  kpiRow: { flexDirection: 'row', gap: 10, marginBottom: 18, flexWrap: 'wrap' },
-  kpiCard: { flex: 1, minWidth: 140, backgroundColor: WHITE, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: BORDER, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2, gap: 3 },
-  kpiTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 },
-  kpiLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, color: MUTED, textTransform: 'uppercase', flex: 1, flexWrap: 'wrap' },
-  kpiIcon: { fontSize: 18 },
-  kpiValue: { fontSize: 30, fontWeight: '700', color: TEXT },
-  kpiSub: { fontSize: 12, fontWeight: '500' },
-
-  splitRow: { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
-
-  // Panels
-  panel: { flex: 2, minWidth: 280, width: '100%', backgroundColor: WHITE, borderRadius: 12, borderWidth: 1, borderColor: BORDER, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
-  geoPanel: { flex: 1, minWidth: 280, width: '100%', backgroundColor: WHITE, borderRadius: 12, borderWidth: 1, borderColor: BORDER, padding: 22, gap: 12, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
-  panelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: BORDER, backgroundColor: SURFACE },
-  panelHeaderRight: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  panelTitle: { fontSize: 17, fontWeight: '700', color: TEXT },
-  tableHeader: { flexDirection: 'row', backgroundColor: '#f0f2f5', borderBottomWidth: 1, borderBottomColor: BORDER, paddingHorizontal: 14, paddingVertical: 9 },
-  th: { flex: 1, fontSize: 10, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.4 },
-  tableRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f2' },
-  td: { flex: 1, fontSize: 13, color: TEXT },
-  tdBold: { fontWeight: '600' },
-  loader: { padding: 28, alignItems: 'center', gap: 8 },
-  loaderText: { color: MUTED, fontSize: 13 },
-  pill: { alignSelf: 'flex-start', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 99 },
-  pillText: { fontSize: 11, fontWeight: '700' },
-  smBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, backgroundColor: '#e8e8ea' },
-  smBtnText: { fontSize: 12, fontWeight: '600', color: SLATE },
-
-  // Geofence
-  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#e8e8ea', borderWidth: 1, borderColor: BORDER },
-  chipActive: { backgroundColor: SLATE },
-  chipText: { fontSize: 12, fontWeight: '600', color: MUTED },
-  mapBtn: { backgroundColor: '#e8f0f8', borderRadius: 8, paddingVertical: 11, paddingHorizontal: 14, alignItems: 'center', borderWidth: 1, borderColor: SLATE_LIGHT },
-  mapBtnText: { fontSize: 13, fontWeight: '600', color: SLATE },
-  saveBtn: { backgroundColor: SLATE, borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 4 },
-  saveBtnText: { color: WHITE, fontSize: 14, fontWeight: '700' },
-  coordBox: { flex: 1, backgroundColor: '#f4f3f5', borderRadius: 8, padding: 12, borderWidth: 1, borderColor: BORDER },
-  coordLabel: { fontSize: 10, color: MUTED, fontWeight: '700', marginBottom: 3 },
-  coordValue: { fontSize: 18, fontWeight: '700', color: SLATE },
-
-  // Modals
-  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,30,50,0.7)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-  modalCard: { backgroundColor: WHITE, borderRadius: 18, padding: 28, width: '90%', maxWidth: 600 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: TEXT, marginBottom: 4 },
-  modalSub: { fontSize: 13, color: MUTED, marginBottom: 12 },
-  mapBox: { height: 380, borderRadius: 10, overflow: 'hidden', backgroundColor: '#e8e8ea', marginBottom: 10 },
-  cancelBtn: { backgroundColor: '#e8e8ea', paddingVertical: 11, paddingHorizontal: 18, borderRadius: 8 },
-  cancelBtnText: { color: MUTED, fontWeight: '600', fontSize: 14 },
-  confirmBtn: { backgroundColor: SLATE, paddingVertical: 11, paddingHorizontal: 18, borderRadius: 8, minWidth: 100, alignItems: 'center' },
-  confirmBtnText: { color: WHITE, fontWeight: '700', fontSize: 14 },
-
-  // Form
-  formLabel: { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.4 },
-  formInput: { borderWidth: 1.5, borderColor: BORDER, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: TEXT, backgroundColor: '#fafafa' },
-  formInputWeb: { borderWidth: 1.5, borderStyle: 'solid', borderColor: BORDER, borderRadius: 8, paddingLeft: 12, paddingRight: 12, height: 42, fontSize: 14, color: TEXT, backgroundColor: '#fafafa', fontFamily: 'inherit', width: '100%' } as any,
-
-  // Class / Section filter chips
-  filterChip: {
-    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20,
-    borderWidth: 1.5, borderColor: BORDER, backgroundColor: WHITE,
-  },
-  filterChipActive: { backgroundColor: SLATE, borderColor: SLATE },
-  filterChipSec: { borderColor: '#a0aec0', backgroundColor: '#f7f8fa' },
-  filterChipSecActive: { backgroundColor: SLATE_LIGHT, borderColor: SLATE },
-  filterChipTxt: { fontSize: 12, fontWeight: '600', color: MUTED },
-  filterChipTxtActive: { color: WHITE },
-
-  // Mobile bottom nav
-  mobileBottomNav: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: WHITE, borderTopWidth: 1, borderTopColor: BORDER,
-    paddingVertical: 8, paddingBottom: 24, zIndex: 50,
-    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: -2 }, elevation: 8,
-  },
-  mobileNavItem: {
-    alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12, gap: 2, minWidth: 72,
-  },
-  mobileNavItemActive: { backgroundColor: SLATE_LIGHT },
-  mobileNavLabel: { fontSize: 10, fontWeight: '600', color: MUTED, textAlign: 'center' },
-});
-

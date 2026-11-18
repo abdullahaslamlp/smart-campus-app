@@ -2,13 +2,16 @@
 // Every action goes through token-checked sa_* RPCs; the server enforces role + scope.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import {
-  ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-  useWindowDimensions,
-} from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
+import {
+  Archive, ArchiveRestore, ExternalLink, KeyRound, LogOut, LucideIcon, MapPin, Pause, Play, Plus, RefreshCw, School, Trash2,
+  Users, Activity, CirclePause, Building2,
+} from 'lucide-react-native';
 import { supabase } from '../../supabase';
 import { loadSession, saveSession } from '../lib/tenant';
+import { AuthLayout, Button, Card, Loading, Notice, PasswordField, TextField, color, radius, space, type } from '../lib/ui';
+import { AdminShell, ChipGroup, ConfirmDialog, ConfirmOptions, Dialog, Kpi, KpiRow, NavItem, PageHeader, Pill, SearchInput, Segmented, Toast } from '../lib/admin-ui';
 import { setAdminSession } from './admin';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,8 +38,6 @@ interface AdminRow {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SESSION_KEY = 'superSession_v1';
-const SLATE = '#466179', SLATE_DARK = '#2d3f50', WHITE = '#ffffff', SURFACE = '#f4f7fb';
-const BORDER = '#c3c7cd', MUTED = '#767779', TEXT = '#1a1c1d', RED = '#c0392b';
 const POLL_MS = 20000;
 
 const ERRORS: [string, string][] = [
@@ -69,79 +70,37 @@ const effectiveStatus = (school: SchoolRow, b: BranchRow): Status =>
 
 const slugify = (v: string) => v.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
 
-function confirmAction(title: string, message: string): Promise<boolean> {
-  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
-  return new Promise(res => Alert.alert(title, message, [
-    { text: 'Cancel', style: 'cancel', onPress: () => res(false) },
-    { text: 'Confirm', style: 'destructive', onPress: () => res(true) },
-  ]));
-}
-
-// ─── Small module-level components (stable identity keeps input focus) ──────
+// ─── Adapters over the shared UI kit (module level keeps inputs focused) ──────
 function Field({ label, value, onChange, placeholder, secret, hint, autoCapitalize = 'none' }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string;
   secret?: boolean; hint?: string; autoCapitalize?: 'none' | 'characters' | 'words';
 }) {
   return (
-    <View style={{ gap: 4, flex: 1, minWidth: 160 }}>
-      <Text style={s.label}>{label}</Text>
-      <TextInput
-        style={s.input} value={value} onChangeText={onChange} placeholder={placeholder}
-        placeholderTextColor="#aaa" secureTextEntry={secret} autoCapitalize={autoCapitalize}
-        autoCorrect={false}
-      />
-      {hint ? <Text style={s.hint}>{hint}</Text> : null}
+    <View style={{ flex: 1, minWidth: 160 }}>
+      {secret
+        ? <PasswordField label={label} value={value} onChangeText={onChange} placeholder={placeholder} hint={hint} />
+        : <TextField label={label} value={value} onChangeText={onChange} placeholder={placeholder} hint={hint} autoCapitalize={autoCapitalize} />}
     </View>
   );
 }
 
 function StatusBadge({ status }: { status: Status }) {
-  const c = status === 'active' ? { bg: '#D1FAE5', fg: '#065F46' }
-    : status === 'paused' ? { bg: '#FEF3C7', fg: '#92400E' } : { bg: '#E5E7EB', fg: '#374151' };
-  return (
-    <View style={[s.badge, { backgroundColor: c.bg }]}>
-      <Text style={[s.badgeText, { color: c.fg }]}>{status.toUpperCase()}</Text>
-    </View>
-  );
+  const c = status === 'active' ? { fg: color.done, bg: color.doneSoft, label: 'Active' }
+    : status === 'paused' ? { fg: color.warn, bg: color.warnSoft, label: 'Paused' }
+      : { fg: color.muted, bg: color.waitingSoft, label: 'Archived' };
+  return <Pill label={c.label} fg={c.fg} bg={c.bg} />;
 }
 
-function Btn({ label, onPress, tone = 'default', disabled }: {
-  label: string; onPress: () => void; tone?: 'default' | 'primary' | 'warn' | 'danger'; disabled?: boolean;
+function Btn({ label, onPress, tone = 'default', disabled, icon, size = 'sm' }: {
+  label: string; onPress: () => void; tone?: 'default' | 'primary' | 'warn' | 'danger' | 'destructive';
+  disabled?: boolean; icon?: LucideIcon; size?: 'sm' | 'md';
 }) {
-  const bg = tone === 'primary' ? SLATE : tone === 'warn' ? '#FEF3C7' : tone === 'danger' ? '#FDECEA' : '#E8F0F8';
-  const fg = tone === 'primary' ? WHITE : tone === 'warn' ? '#92400E' : tone === 'danger' ? RED : SLATE;
-  return (
-    <Pressable onPress={onPress} disabled={disabled}
-      style={({ pressed }) => [s.btn, { backgroundColor: bg, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 }]}>
-      <Text style={[s.btnText, { color: fg }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function Kpi({ label, value, icon }: { label: string; value: string | number; icon: string }) {
-  return (
-    <View style={s.kpi}>
-      <Text style={{ fontSize: 20 }}>{icon}</Text>
-      <Text style={s.kpiValue}>{value}</Text>
-      <Text style={s.kpiLabel}>{label}</Text>
-    </View>
-  );
+  const variant = tone === 'primary' ? 'primary' : tone === 'danger' ? 'danger' : tone === 'destructive' ? 'destructive' : 'secondary';
+  return <Button label={label} onPress={onPress} disabled={disabled} variant={variant} size={size} icon={icon} />;
 }
 
 function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <View style={s.overlay}>
-      <ScrollView contentContainerStyle={s.overlayInner}>
-        <View style={s.modal}>
-          <View style={s.modalHead}>
-            <Text style={s.modalTitle}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={10}><Text style={{ fontSize: 18, color: MUTED }}>✕</Text></Pressable>
-          </View>
-          {children}
-        </View>
-      </ScrollView>
-    </View>
-  );
+  return <Dialog title={title} onClose={onClose}>{children}</Dialog>;
 }
 
 // ─── Modal state types ────────────────────────────────────────────────────────
@@ -156,8 +115,6 @@ type ModalState =
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function SuperAdmin() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const narrow = width < 760;
 
   const [session, setSession] = useState<SuperSession | null>(() => loadSession<SuperSession>(SESSION_KEY));
   const [tab, setTab] = useState<'schools' | 'admins'>('schools');
@@ -168,12 +125,25 @@ export default function SuperAdmin() {
   const [banner, setBanner] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState<ModalState>(null);
+  const [confirmState, setConfirmState] = useState<{ opts: ConfirmOptions; resolve: (ok: boolean) => void } | null>(null);
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null);
 
   // ── login form ──
   const [lUser, setLUser] = useState('');
   const [lPw, setLPw] = useState('');
   const [lErr, setLErr] = useState('');
   const [lBusy, setLBusy] = useState(false);
+
+  const confirmAction = (title: string, message: string, tone: 'default' | 'danger' = 'default') =>
+    new Promise<boolean>(resolve => setConfirmState({ opts: { title, message, tone, confirmLabel: title.replace(/\?$/, '') }, resolve }));
+  const answerConfirm = (ok: boolean) => { confirmState?.resolve(ok); setConfirmState(null); };
+
+  // Notices clear themselves.
+  useEffect(() => {
+    if (!banner) return;
+    const t = setTimeout(() => setBanner(null), banner.tone === 'ok' ? 3500 : 9000);
+    return () => clearTimeout(t);
+  }, [banner]);
 
   const updateSession = (next: SuperSession | null) => { saveSession(SESSION_KEY, next); setSession(next); };
 
@@ -206,6 +176,7 @@ export default function SuperAdmin() {
       const [ov, ad] = await Promise.all([call('sa_overview'), call('sa_list_admins')]);
       setSchools(ov?.schools ?? []);
       setAdmins(ad ?? []);
+      setSyncedAt(new Date());
     } catch (e: any) {
       if (!String(e?.message).includes('session_expired')) setBanner({ tone: 'err', text: errText(e) });
     }
@@ -235,11 +206,11 @@ export default function SuperAdmin() {
 
   // ── Login ──
   const handleLogin = async () => {
-    if (!lUser.trim() || !lPw) { setLErr('Please enter your username and password.'); return; }
+    if (!lUser.trim() || !lPw) { setLErr('Enter your username and password.'); return; }
     setLErr(''); setLBusy(true);
     try {
       const { data, error } = await supabase.rpc('login_admin', { p_username: lUser, p_password: lPw });
-      if (error) { setLErr('Connection error. Please try again.'); return; }
+      if (error) { setLErr('Couldn’t reach the server. Check your connection and try again.'); return; }
       if (!data?.ok) {
         setLErr(data?.error === 'bad_password' ? 'Incorrect password.'
           : data?.error === 'not_found' ? 'No admin account with that username.'
@@ -249,13 +220,13 @@ export default function SuperAdmin() {
       }
       if (data.role === 'branch') {
         await supabase.rpc('admin_logout', { p_token: data.token });
-        setLErr('This is a campus admin account. Please use the Admin Portal instead.');
+        setLErr('This is a campus admin account. Use the staff sign-in instead.');
         return;
       }
       updateSession({ token: data.token, adminId: data.admin_id, username: data.username, fullName: data.full_name, role: data.role });
       setLPw('');
     } catch (e: any) {
-      setLErr('An unexpected error occurred.');
+      setLErr('Something went wrong. Please try again.');
     } finally { setLBusy(false); }
   };
 
@@ -317,181 +288,166 @@ export default function SuperAdmin() {
       || sc.branches.some(b => b.name.toLowerCase().includes(q) || b.code.toLowerCase().includes(q)));
   }, [schools, search]);
 
-  // ─── Login screen ──────────────────────────────────────────────────────────
+  // ─── Sign-in ──────────────────────────────────────────────────────────────
   if (!session) {
     return (
-      <View style={s.loginRoot}>
-        <View style={s.loginCard}>
-          <View style={s.logo}><Text style={{ fontSize: 32 }}>🏛️</Text></View>
-          <Text style={s.loginTitle}>Super Admin</Text>
-          <Text style={s.loginSub}>SafePass platform management</Text>
-          {lErr ? <View style={s.errBox}><Text style={s.errText}>⚠️ {lErr}</Text></View> : null}
-          <View style={{ alignSelf: 'stretch', gap: 12 }}>
-            <Field label="Username" value={lUser} onChange={setLUser} placeholder="owner" />
-            <View style={{ gap: 4 }}>
-              <Text style={s.label}>Password</Text>
-              <TextInput style={s.input} value={lPw} onChangeText={setLPw} secureTextEntry
-                placeholder="Password" placeholderTextColor="#aaa" onSubmitEditing={handleLogin} />
-            </View>
-          </View>
-          <Pressable style={s.loginBtn} onPress={handleLogin} disabled={lBusy}>
-            {lBusy ? <ActivityIndicator color={WHITE} /> : <Text style={s.loginBtnText}>Sign In →</Text>}
-          </Pressable>
-          <Pressable onPress={() => router.replace('/')}><Text style={s.link}>← Back to Home</Text></Pressable>
-        </View>
-      </View>
+      <AuthLayout title="Super admin sign in" subtitle="Manage schools, campuses and admin accounts across the platform."
+        onBack={() => router.replace('/')}>
+        {lErr ? <Notice tone="error">{lErr}</Notice> : null}
+        <TextField label="Username" placeholder="e.g. owner" value={lUser} onChangeText={setLUser} autoComplete="username" returnKeyType="next" />
+        <PasswordField label="Password" value={lPw} onChangeText={setLPw} onSubmitEditing={handleLogin} returnKeyType="go" />
+        <Button label="Sign in" size="lg" full loading={lBusy} onPress={handleLogin} />
+      </AuthLayout>
     );
   }
 
-  // ─── Portal ────────────────────────────────────────────────────────────────
-  return (
-    <View style={s.root}>
-      {/* Header */}
-      <View style={[s.header, narrow && { paddingHorizontal: 12 }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 }}>
-          <View style={s.headLogo}><Text style={{ fontSize: 18 }}>🏛️</Text></View>
-          <View style={{ flexShrink: 1 }}>
-            <Text style={s.headTitle}>SafePass Super Admin</Text>
-            <Text style={s.headSub} numberOfLines={1}>
-              {session.fullName || session.username} · {session.role === 'owner' ? 'Platform owner' : 'Super admin'}
-            </Text>
-          </View>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <Btn label="↻" onPress={refresh} />
-          <Btn label="Sign out" tone="danger" onPress={() => logout()} />
-        </View>
-      </View>
+  const roleLabel = session.role === 'owner' ? 'Platform owner' : 'Super admin';
+  const nav: NavItem[] = [
+    { id: 'schools', label: 'Schools & campuses', Icon: School, group: 'Platform', primary: true },
+    { id: 'admins', label: 'Admin accounts', Icon: KeyRound, group: 'Platform', primary: true },
+  ];
+  const syncText = syncedAt ? `Updated ${syncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Loading…';
+  const refreshButton = <Button label="Refresh" size="sm" variant="secondary" icon={RefreshCw} onPress={refresh} />;
 
-      {/* Tabs */}
-      <View style={[s.tabs, narrow && { paddingHorizontal: 12 }]}>
-        {(['schools', 'admins'] as const).map(t => (
-          <Pressable key={t} onPress={() => setTab(t)} style={[s.tab, tab === t && s.tabActive]}>
-            <Text style={[s.tabText, tab === t && s.tabTextActive]}>
-              {t === 'schools' ? '🏫 Schools & Campuses' : '🔑 Admin Accounts'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+  const statusActions = (
+    kind: 'school' | 'branch', status: Status, label: string,
+    onSet: (st: Status) => void, onDelete: () => void,
+  ) => (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+      {status === 'active' ? <Btn size="md" label={`Pause ${label}`} icon={Pause} onPress={() => onSet('paused')} disabled={busy} /> : null}
+      {status === 'paused' ? <Btn size="md" label={`Resume ${label}`} icon={Play} tone="primary" onPress={() => onSet('active')} disabled={busy} /> : null}
+      {status !== 'archived'
+        ? <Btn size="md" label="Archive" icon={Archive} onPress={() => onSet('archived')} disabled={busy} />
+        : <Btn size="md" label="Restore" icon={ArchiveRestore} tone="primary" onPress={() => onSet('active')} disabled={busy} />}
+      {status === 'archived' ? <Btn size="md" label="Delete permanently" icon={Trash2} tone="danger" onPress={onDelete} disabled={busy} /> : null}
+    </View>
+  );
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: narrow ? 12 : 24, paddingBottom: 64, gap: 16 }}>
-        {banner ? (
-          <Pressable onPress={() => setBanner(null)}
-            style={[s.banner, banner.tone === 'ok' ? s.bannerOk : s.bannerErr]}>
-            <Text style={[s.bannerText, { color: banner.tone === 'ok' ? '#065F46' : RED }]}>
-              {banner.tone === 'ok' ? '✅ ' : '⚠️ '}{banner.text}
-            </Text>
-          </Pressable>
-        ) : null}
+  const renderSchools = () => (
+    <>
+      <PageHeader title="Schools & campuses" description={`${syncText} · refreshes every ${POLL_MS / 1000} seconds`}
+        actions={(<>{refreshButton}{session.role === 'owner' ? <Button label="New school" size="sm" icon={Plus} onPress={() => setModal({ kind: 'newSchool' })} /> : null}</>)} />
+      <KpiRow>
+        <Kpi label="Schools" value={kpis.schools} Icon={School} />
+        <Kpi label="Active campuses" value={kpis.active} Icon={Building2} tone="done" />
+        <Kpi label="Paused campuses" value={kpis.paused} Icon={CirclePause} tone={kpis.paused ? 'warn' : 'default'} hint={`${kpis.archived} archived`} />
+        <Kpi label="Students" value={kpis.students} Icon={Users} />
+        <Kpi label="Dismissals in progress" value={kpis.live} Icon={Activity} tone="sent" hint="Sent to gate" />
+      </KpiRow>
+      <SearchInput value={search} onChange={setSearch} placeholder="Search schools, campuses or codes" />
 
-        {loading && schools.length === 0 ? (
-          <ActivityIndicator color={SLATE} size="large" style={{ marginTop: 48 }} />
-        ) : tab === 'schools' ? (
-          <>
-            {/* KPIs */}
-            <View style={s.kpiRow}>
-              <Kpi icon="🏫" label="Schools" value={kpis.schools} />
-              <Kpi icon="🟢" label="Active campuses" value={kpis.active} />
-              <Kpi icon="⏸️" label="Paused campuses" value={kpis.paused} />
-              <Kpi icon="🗄️" label="Archived" value={kpis.archived} />
-              <Kpi icon="👥" label="Students" value={kpis.students} />
-              <Kpi icon="🚶" label="Live dismissals" value={kpis.live} />
-            </View>
-
-            {/* Toolbar */}
-            <View style={s.toolbar}>
-              <TextInput style={[s.input, { flex: 1, minWidth: 200 }]} value={search} onChangeText={setSearch}
-                placeholder="Search schools, campuses or codes…" placeholderTextColor="#aaa" />
-              {session.role === 'owner' && <Btn label="+ New School" tone="primary" onPress={() => setModal({ kind: 'newSchool' })} />}
-            </View>
-
-            {visibleSchools.length === 0 ? (
-              <View style={s.empty}><Text style={s.emptyText}>No schools found.</Text></View>
-            ) : visibleSchools.map(sc => (
-              <View key={sc.id} style={s.card}>
-                <View style={s.cardHead}>
-                  <View style={{ flex: 1, minWidth: 200, gap: 2 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <Text style={s.schoolName}>{sc.name}</Text>
-                      <StatusBadge status={sc.status} />
-                    </View>
-                    <Text style={s.meta}>slug: {sc.slug} · {sc.branches.length} campus{sc.branches.length === 1 ? '' : 'es'}</Text>
-                  </View>
-                  {sc.can_manage && (
-                    <View style={s.actions}>
-                      {sc.status !== 'archived' && <Btn label="+ Campus" onPress={() => setModal({ kind: 'newBranch', school: sc })} disabled={busy} />}
-                      {sc.status === 'active' && <Btn label="Pause school" tone="warn" onPress={() => setSchoolStatus(sc, 'paused')} disabled={busy} />}
-                      {sc.status === 'paused' && <Btn label="Resume school" tone="primary" onPress={() => setSchoolStatus(sc, 'active')} disabled={busy} />}
-                      {sc.status !== 'archived'
-                        ? <Btn label="Archive" onPress={() => setSchoolStatus(sc, 'archived')} disabled={busy} />
-                        : <Btn label="Restore" tone="primary" onPress={() => setSchoolStatus(sc, 'active')} disabled={busy} />}
-                      {sc.status === 'archived' && (
-                        <Btn label="Delete permanently" tone="danger" disabled={busy} onPress={() => setModal({
-                          kind: 'delete', target: 'school', id: sc.id, name: sc.name, confirmWord: sc.slug,
-                          detail: `${sc.branches.length} campus(es), ${sc.branches.reduce((n, b) => n + Number(b.students), 0)} students, `
-                            + `${sc.branches.reduce((n, b) => n + Number(b.parents), 0)} parent accounts and `
-                            + `${sc.branches.reduce((n, b) => n + Number(b.drivers), 0)} transporters`,
-                        })} />
-                      )}
-                    </View>
-                  )}
-                </View>
-
-                {sc.branches.map(b => {
-                  const st = effectiveStatus(sc, b);
-                  return (
-                    <View key={b.id} style={s.branch}>
-                      <View style={{ flex: 1, minWidth: 220, gap: 4 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <Text style={s.branchName}>{b.name}</Text>
-                          <Text style={s.code}>{b.code}</Text>
-                          <StatusBadge status={st} />
-                          {st !== b.status ? <Text style={s.meta}>(school {sc.status})</Text> : null}
-                        </View>
-                        <Text style={s.meta}>
-                          {b.students} students · {b.active_dismissals} dispatched · {b.received} received · {b.parents} parents · {b.drivers} drivers
-                        </Text>
-                        <Text style={s.meta}>
-                          📍 {Number(b.lat).toFixed(5)}, {Number(b.lng).toFixed(5)} · {b.geofence_radius}m
-                          {b.admins.length ? ` · admins: ${b.admins.join(', ')}` : ' · no campus admin'}
-                        </Text>
-                        <Text style={s.meta}>Parent link: /parent-login?branch={b.code} · Driver link: /driver-login?branch={b.code}</Text>
-                      </View>
-                      <View style={s.actions}>
-                        <Btn label="Open dashboard" tone="primary" onPress={() => openDashboard(b)} disabled={busy} />
-                        {b.status === 'active' && <Btn label="Pause" tone="warn" onPress={() => setBranchStatus(sc, b, 'paused')} disabled={busy} />}
-                        {b.status === 'paused' && <Btn label="Resume" tone="primary" onPress={() => setBranchStatus(sc, b, 'active')} disabled={busy} />}
-                        {b.status !== 'archived'
-                          ? <Btn label="Archive" onPress={() => setBranchStatus(sc, b, 'archived')} disabled={busy} />
-                          : <Btn label="Restore" tone="primary" onPress={() => setBranchStatus(sc, b, 'active')} disabled={busy} />}
-                        {b.status === 'archived' && (
-                          <Btn label="Delete permanently" tone="danger" disabled={busy} onPress={() => setModal({
-                            kind: 'delete', target: 'branch', id: b.id, name: `${sc.name} — ${b.name}`, confirmWord: b.code,
-                            detail: `${b.students} students, ${b.parents} parent accounts and ${b.drivers} transporters`,
-                          })} />
-                        )}
-                      </View>
-                    </View>
-                  );
-                })}
-                {sc.branches.length === 0 && <Text style={[s.meta, { padding: 16 }]}>No campuses you can manage in this school.</Text>}
+      {visibleSchools.length === 0 ? (
+        <Card><Text style={type.body}>{schools.length === 0 ? 'No schools yet.' : 'No schools match your search.'}</Text></Card>
+      ) : visibleSchools.map(sc => (
+        <Card key={sc.id} padded={false}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md, padding: space.lg, backgroundColor: '#FAFBFC', borderBottomWidth: 1, borderBottomColor: color.border, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg }}>
+            <View style={{ flex: 1, minWidth: 200, gap: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+                <Text style={type.heading}>{sc.name}</Text>
+                <StatusBadge status={sc.status} />
               </View>
-            ))}
-          </>
-        ) : (
-          <AdminsTab
-            admins={admins} session={session} busy={busy}
-            onNew={() => setModal({ kind: 'newAdmin' })}
-            onPassword={a => setModal({ kind: 'password', admin: a })}
-            onToggle={async a => {
-              const verb = a.is_active ? 'Deactivate' : 'Activate';
-              if (!(await confirmAction(`${verb} ${a.username}?`, a.is_active
-                ? 'They will be signed out and unable to sign in until reactivated.' : 'They will be able to sign in again.'))) return;
-              act(() => call('sa_update_admin', { p_admin_id: a.id, p_is_active: !a.is_active }), `${a.username}: ${verb.toLowerCase()}d.`);
-            }}
-          />
-        )}
-      </ScrollView>
+              <Text style={type.small}>{sc.slug} · {sc.branches.length} campus{sc.branches.length === 1 ? '' : 'es'}</Text>
+            </View>
+            {sc.can_manage ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+                {sc.status !== 'archived' ? <Btn size="md" label="Add campus" icon={Plus} onPress={() => setModal({ kind: 'newBranch', school: sc })} disabled={busy} /> : null}
+                {statusActions('school', sc.status, 'school', st => setSchoolStatus(sc, st), () => setModal({
+                  kind: 'delete', target: 'school', id: sc.id, name: sc.name, confirmWord: sc.slug,
+                  detail: `${sc.branches.length} campus(es), ${sc.branches.reduce((n, b) => n + Number(b.students), 0)} students, `
+                    + `${sc.branches.reduce((n, b) => n + Number(b.parents), 0)} parent accounts and `
+                    + `${sc.branches.reduce((n, b) => n + Number(b.drivers), 0)} transporters`,
+                }))}
+              </View>
+            ) : null}
+          </View>
+
+          {sc.branches.map((b, i) => {
+            const st = effectiveStatus(sc, b);
+            return (
+              <View key={b.id} style={[{ flexDirection: 'row', flexWrap: 'wrap', gap: space.md, padding: space.lg, alignItems: 'center' }, i > 0 && { borderTopWidth: 1, borderTopColor: color.border }]}>
+                <View style={{ flex: 1, minWidth: 240, gap: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+                    <Text style={[type.body, { fontWeight: '600', color: color.ink }]}>{b.name}</Text>
+                    <Text style={[type.small, { fontVariant: ['tabular-nums'] }]}>{b.code}</Text>
+                    <StatusBadge status={st} />
+                    {st !== b.status ? <Text style={type.small}>(school is {sc.status})</Text> : null}
+                  </View>
+                  <Text style={type.small}>
+                    {b.students} students · {b.active_dismissals} at gate · {b.received} picked up · {b.parents} parents · {b.drivers} drivers
+                  </Text>
+                  <Text style={type.small}>
+                    {Number(b.lat).toFixed(5)}, {Number(b.lng).toFixed(5)} · {b.geofence_radius} m · {b.admins.length ? `Admins: ${b.admins.join(', ')}` : 'No campus admin yet'}
+                  </Text>
+                  <Text style={type.small}>Login links: /parent-login?branch={b.code} · /driver-login?branch={b.code}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+                  <Btn size="md" label="Open dashboard" icon={ExternalLink} tone="primary" onPress={() => openDashboard(b)} disabled={busy} />
+                  {statusActions('branch', b.status, 'campus', status => setBranchStatus(sc, b, status), () => setModal({
+                    kind: 'delete', target: 'branch', id: b.id, name: `${sc.name} — ${b.name}`, confirmWord: b.code,
+                    detail: `${b.students} students, ${b.parents} parent accounts and ${b.drivers} transporters`,
+                  }))}
+                </View>
+              </View>
+            );
+          })}
+          {sc.branches.length === 0 ? <Text style={[type.small, { padding: space.lg }]}>No campuses you can manage in this school.</Text> : null}
+        </Card>
+      ))}
+    </>
+  );
+
+  const renderAdmins = () => {
+    const roleName = (r: Role) => (r === 'owner' ? 'Platform owner' : r === 'super' ? 'Super admin' : 'Campus admin');
+    return (
+      <>
+        <PageHeader title="Admin accounts"
+          description={session.role === 'owner' ? 'Owners, super admins and campus admins.' : 'Campus admins for the campuses you manage, plus your own account.'}
+          actions={(<>{refreshButton}<Button label="New admin" size="sm" icon={Plus} onPress={() => setModal({ kind: 'newAdmin' })} /></>)} />
+        {admins.map(a => (
+          <Card key={a.id} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.md, alignItems: 'center' }}>
+            <View style={{ flex: 1, minWidth: 240, gap: 3 }}>
+              <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Text style={[type.body, { fontWeight: '600', color: color.ink }]}>{a.username}</Text>
+                {a.is_self ? <Pill label="You" fg={color.accent} bg={color.accentSoft} /> : null}
+                <Pill label={a.is_active ? 'Active' : 'Inactive'} fg={a.is_active ? color.done : color.muted} bg={a.is_active ? color.doneSoft : color.waitingSoft} />
+              </View>
+              <Text style={type.small}>{a.full_name ? `${a.full_name} · ` : ''}{roleName(a.role)}</Text>
+              <Text style={type.small}>
+                {a.role === 'owner' ? 'Access: every school'
+                  : a.scopes.length ? `Access: ${a.scopes.map(x => x.name).join(', ')}` : 'Access: none'}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+              <Btn size="md" label={a.is_self ? 'Change my password' : 'Reset password'} icon={KeyRound} onPress={() => setModal({ kind: 'password', admin: a })} disabled={busy} />
+              {!a.is_self ? (
+                <Btn size="md" label={a.is_active ? 'Deactivate' : 'Activate'} tone={a.is_active ? 'danger' : 'primary'} disabled={busy}
+                  onPress={async () => {
+                    const verb = a.is_active ? 'Deactivate' : 'Activate';
+                    if (!(await confirmAction(`${verb} ${a.username}?`, a.is_active
+                      ? 'They will be signed out and unable to sign in until reactivated.' : 'They will be able to sign in again.', a.is_active ? 'danger' : 'default'))) return;
+                    act(() => call('sa_update_admin', { p_admin_id: a.id, p_is_active: !a.is_active }), `${a.username}: ${verb.toLowerCase()}d.`);
+                  }} />
+              ) : null}
+            </View>
+          </Card>
+        ))}
+      </>
+    );
+  };
+
+  // ─── Portal ───────────────────────────────────────────────────────────────
+  return (
+    <View style={{ flex: 1 }}>
+      <AdminShell
+        context="SafePass" contextSub={roleLabel} user={session.username}
+        nav={nav} active={tab} onNavigate={id => setTab(id as 'schools' | 'admins')}
+        footer={[{ label: 'Sign out', Icon: LogOut, onPress: () => logout() }]}
+      >
+        {loading && schools.length === 0 ? <Loading label="Loading schools…" /> : tab === 'schools' ? renderSchools() : renderAdmins()}
+      </AdminShell>
+
+      {banner ? <Toast tone={banner.tone === 'ok' ? 'success' : 'error'} text={banner.text} onClose={() => setBanner(null)} /> : null}
+      {confirmState ? <ConfirmDialog options={confirmState.opts} onResult={answerConfirm} /> : null}
 
       {/* Modals */}
       {modal?.kind === 'newSchool' && (
@@ -554,51 +510,6 @@ export default function SuperAdmin() {
   );
 }
 
-// ─── Admins tab ───────────────────────────────────────────────────────────────
-function AdminsTab({ admins, session, busy, onNew, onPassword, onToggle }: {
-  admins: AdminRow[]; session: SuperSession; busy: boolean;
-  onNew: () => void; onPassword: (a: AdminRow) => void; onToggle: (a: AdminRow) => void;
-}) {
-  const roleLabel = (r: Role) => r === 'owner' ? 'Platform owner' : r === 'super' ? 'Super admin' : 'Campus admin';
-  return (
-    <View style={{ gap: 12 }}>
-      <View style={s.toolbar}>
-        <Text style={[s.schoolName, { flex: 1 }]}>Admin Accounts</Text>
-        <Btn label="+ New Admin" tone="primary" onPress={onNew} />
-      </View>
-      {admins.map(a => (
-        <View key={a.id} style={[s.card, { padding: 16, flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center' }]}>
-          <View style={{ flex: 1, minWidth: 220, gap: 3 }}>
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Text style={s.branchName}>{a.username}</Text>
-              {a.is_self && <Text style={s.code}>YOU</Text>}
-              <View style={[s.badge, { backgroundColor: a.is_active ? '#D1FAE5' : '#E5E7EB' }]}>
-                <Text style={[s.badgeText, { color: a.is_active ? '#065F46' : '#374151' }]}>{a.is_active ? 'ACTIVE' : 'INACTIVE'}</Text>
-              </View>
-            </View>
-            <Text style={s.meta}>{a.full_name ? `${a.full_name} · ` : ''}{roleLabel(a.role)}</Text>
-            <Text style={s.meta}>
-              {a.role === 'owner' ? 'Access: every school' : a.scopes.length
-                ? 'Access: ' + a.scopes.map(x => (x.type === 'school' ? '🏫 ' : '📍 ') + x.name).join(', ')
-                : 'Access: none'}
-            </Text>
-          </View>
-          <View style={s.actions}>
-            <Btn label={a.is_self ? 'Change my password' : 'Reset password'} onPress={() => onPassword(a)} disabled={busy} />
-            {!a.is_self && (
-              <Btn label={a.is_active ? 'Deactivate' : 'Activate'} tone={a.is_active ? 'warn' : 'primary'}
-                onPress={() => onToggle(a)} disabled={busy} />
-            )}
-          </View>
-        </View>
-      ))}
-      {session.role !== 'owner' && (
-        <Text style={s.meta}>As a super admin you can create and manage campus admins for the campuses you control.</Text>
-      )}
-    </View>
-  );
-}
-
 // ─── Forms ────────────────────────────────────────────────────────────────────
 interface CampusValues {
   schoolName: string; slug: string; name: string; code: string;
@@ -649,7 +560,7 @@ function CampusForm({ title, withSchool, busy, onClose, onSubmit }: {
 
   return (
     <ModalShell title={title} onClose={onClose}>
-      {err ? <View style={s.errBox}><Text style={s.errText}>⚠️ {err}</Text></View> : null}
+      {err ? <Notice tone="error">{err}</Notice> : null}
       {withSchool && (
         <View style={s.formRow}>
           <Field label="School name" value={schoolName} autoCapitalize="words"
@@ -670,16 +581,16 @@ function CampusForm({ title, withSchool, busy, onClose, onSubmit }: {
         <Field label="Geofence radius (m)" value={radius} onChange={setRadius} placeholder="150" hint="50–500" />
       </View>
       <View style={{ alignItems: 'flex-start' }}>
-        <Btn label={gps ? 'Locating…' : '📍 Use my current location'} onPress={useMyLocation} disabled={gps} />
+        <Btn label={gps ? 'Locating…' : 'Use my current location'} icon={MapPin} onPress={useMyLocation} disabled={gps} />
       </View>
-      <Text style={[s.label, { marginTop: 4 }]}>Campus admin (optional)</Text>
+      <Text style={[type.label, { marginTop: 4 }]}>Campus admin (optional)</Text>
       <View style={s.formRow}>
         <Field label="Username" value={adminUser} onChange={setAdminUser} placeholder="gulberg_admin" />
         <Field label="Password" value={adminPw} onChange={setAdminPw} secret placeholder="min 8 characters" />
       </View>
       <View style={s.modalFoot}>
-        <Btn label="Cancel" onPress={onClose} />
-        <Btn label={busy ? 'Saving…' : 'Create'} tone="primary" onPress={submit} disabled={busy} />
+        <Btn size="md" label="Cancel" onPress={onClose} />
+        <Btn size="md" label={busy ? 'Saving…' : 'Create'} tone="primary" onPress={submit} disabled={busy} />
       </View>
     </ModalShell>
   );
@@ -692,15 +603,13 @@ function DeleteForm({ modal, busy, onClose, onSubmit }: {
   const [typed, setTyped] = useState('');
   return (
     <ModalShell title={`Permanently delete ${modal.target}`} onClose={onClose}>
-      <View style={s.errBox}>
-        <Text style={s.errText}>
-          This permanently deletes {modal.name} and all its data: {modal.detail}. This cannot be undone.
-        </Text>
-      </View>
+      <Notice tone="error" title="This can’t be undone">
+        {`This permanently deletes ${modal.name} and all its data: ${modal.detail}.`}
+      </Notice>
       <Field label={`Type "${modal.confirmWord}" to confirm`} value={typed} onChange={setTyped} placeholder={modal.confirmWord} />
       <View style={s.modalFoot}>
-        <Btn label="Cancel" onPress={onClose} />
-        <Btn label={busy ? 'Deleting…' : 'Delete permanently'} tone="danger"
+        <Btn size="md" label="Cancel" onPress={onClose} />
+        <Btn size="md" label={busy ? 'Deleting…' : 'Delete permanently'} tone="destructive"
           disabled={busy || typed !== modal.confirmWord} onPress={() => onSubmit(typed)} />
       </View>
     </ModalShell>
@@ -721,6 +630,7 @@ function AdminForm({ schools, role, busy, onClose, onSubmit }: {
   const toggle = (list: string[], set: (v: string[]) => void, id: string) =>
     set(list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
   const roles: Role[] = role === 'owner' ? ['branch', 'super', 'owner'] : ['branch'];
+  const roleName = (r: Role) => (r === 'branch' ? 'Campus admin' : r === 'super' ? 'Super admin' : 'Platform owner');
 
   const submit = () => {
     if (!username.trim() || password.length < 8) return setErr('Username and a password of at least 8 characters are required.');
@@ -735,52 +645,28 @@ function AdminForm({ schools, role, busy, onClose, onSubmit }: {
 
   return (
     <ModalShell title="New Admin Account" onClose={onClose}>
-      {err ? <View style={s.errBox}><Text style={s.errText}>⚠️ {err}</Text></View> : null}
+      {err ? <Notice tone="error">{err}</Notice> : null}
       <View style={s.formRow}>
         <Field label="Username" value={username} onChange={setUsername} placeholder="e.g. cityschool_super" />
         <Field label="Full name" value={fullName} onChange={setFullName} autoCapitalize="words" placeholder="optional" />
       </View>
       <Field label="Password" value={password} onChange={setPassword} secret placeholder="min 8 characters" />
-      <Text style={s.label}>Role</Text>
-      <View style={s.chips}>
-        {roles.map(r => (
-          <Pressable key={r} onPress={() => setNewRole(r)} style={[s.chip, newRole === r && s.chipOn]}>
-            <Text style={[s.chipText, newRole === r && s.chipTextOn]}>
-              {r === 'branch' ? 'Campus admin' : r === 'super' ? 'Super admin' : 'Platform owner'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <Segmented label="Role" options={roles.map(roleName)} value={roleName(newRole)}
+        onChange={v => setNewRole(roles.find(r => roleName(r) === v) ?? 'branch')} />
       {newRole === 'super' && (
-        <>
-          <Text style={s.label}>Whole schools (every campus, including future ones)</Text>
-          <View style={s.chips}>
-            {schools.filter(sc => sc.can_manage).map(sc => (
-              <Pressable key={sc.id} onPress={() => toggle(schoolIds, setSchoolIds, sc.id)}
-                style={[s.chip, schoolIds.includes(sc.id) && s.chipOn]}>
-                <Text style={[s.chipText, schoolIds.includes(sc.id) && s.chipTextOn]}>🏫 {sc.name}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </>
+        <ChipGroup label="Whole schools (every campus, including future ones)"
+          options={schools.filter(sc => sc.can_manage).map(sc => ({ key: sc.id, label: sc.name }))}
+          selected={schoolIds} onToggle={id => toggle(schoolIds, setSchoolIds, id)} />
       )}
       {newRole !== 'owner' && (
-        <>
-          <Text style={s.label}>{newRole === 'super' ? 'Individual campuses' : 'Campuses'}</Text>
-          <View style={s.chips}>
-            {schools.flatMap(sc => sc.branches.filter(b => b.status !== 'archived').map(b => (
-              <Pressable key={b.id} onPress={() => toggle(branchIds, setBranchIds, b.id)}
-                style={[s.chip, branchIds.includes(b.id) && s.chipOn]}>
-                <Text style={[s.chipText, branchIds.includes(b.id) && s.chipTextOn]}>📍 {sc.name} — {b.name}</Text>
-              </Pressable>
-            )))}
-          </View>
-        </>
+        <ChipGroup label={newRole === 'super' ? 'Individual campuses' : 'Campuses'}
+          options={schools.flatMap(sc => sc.branches.filter(b => b.status !== 'archived').map(b => ({ key: b.id, label: `${sc.name} — ${b.name}` })))}
+          selected={branchIds} onToggle={id => toggle(branchIds, setBranchIds, id)} />
       )}
-      {newRole === 'owner' && <Text style={s.meta}>Platform owners can manage every school, create schools and other owners.</Text>}
+      {newRole === 'owner' && <Text style={type.small}>Platform owners can manage every school, create schools and other owners.</Text>}
       <View style={s.modalFoot}>
-        <Btn label="Cancel" onPress={onClose} />
-        <Btn label={busy ? 'Saving…' : 'Create admin'} tone="primary" onPress={submit} disabled={busy} />
+        <Btn size="md" label="Cancel" onPress={onClose} />
+        <Btn size="md" label={busy ? 'Saving…' : 'Create admin'} tone="primary" onPress={submit} disabled={busy} />
       </View>
     </ModalShell>
   );
@@ -799,12 +685,12 @@ function PasswordForm({ admin, busy, onClose, onSubmit }: {
   };
   return (
     <ModalShell title={admin.is_self ? 'Change my password' : `Reset password — ${admin.username}`} onClose={onClose}>
-      {err ? <View style={s.errBox}><Text style={s.errText}>⚠️ {err}</Text></View> : null}
+      {err ? <Notice tone="error">{err}</Notice> : null}
       <Field label="New password" value={pw} onChange={setPw} secret placeholder="min 8 characters" />
       <Field label="Repeat password" value={pw2} onChange={setPw2} secret />
       <View style={s.modalFoot}>
-        <Btn label="Cancel" onPress={onClose} />
-        <Btn label={busy ? 'Saving…' : 'Save password'} tone="primary" onPress={submit} disabled={busy} />
+        <Btn size="md" label="Cancel" onPress={onClose} />
+        <Btn size="md" label={busy ? 'Saving…' : 'Save password'} tone="primary" onPress={submit} disabled={busy} />
       </View>
     </ModalShell>
   );
@@ -812,78 +698,6 @@ function PasswordForm({ admin, busy, onClose, onSubmit }: {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: SURFACE },
-  loginRoot: { flex: 1, backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center', padding: 16 },
-  loginCard: {
-    backgroundColor: WHITE, borderRadius: 20, padding: 32, width: '100%', maxWidth: 420, gap: 14,
-    alignItems: 'center', borderWidth: 1, borderColor: BORDER,
-  },
-  logo: { width: 68, height: 68, borderRadius: 34, backgroundColor: SLATE_DARK, alignItems: 'center', justifyContent: 'center' },
-  loginTitle: { fontSize: 26, fontWeight: '800', color: SLATE_DARK },
-  loginSub: { fontSize: 13, color: MUTED },
-  loginBtn: { alignSelf: 'stretch', backgroundColor: SLATE_DARK, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  loginBtnText: { color: WHITE, fontSize: 16, fontWeight: '700' },
-  link: { color: SLATE, fontWeight: '600', fontSize: 14 },
-
-  header: {
-    backgroundColor: WHITE, borderBottomWidth: 1, borderBottomColor: BORDER, paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'web' ? 12 : 48, paddingBottom: 12,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-  },
-  headLogo: { width: 38, height: 38, borderRadius: 19, backgroundColor: SLATE_DARK, alignItems: 'center', justifyContent: 'center' },
-  headTitle: { fontSize: 17, fontWeight: '800', color: SLATE_DARK },
-  headSub: { fontSize: 12, color: MUTED },
-  tabs: { flexDirection: 'row', gap: 4, paddingHorizontal: 24, backgroundColor: WHITE, borderBottomWidth: 1, borderBottomColor: BORDER },
-  tab: { paddingVertical: 12, paddingHorizontal: 12, borderBottomWidth: 3, borderBottomColor: 'transparent' },
-  tabActive: { borderBottomColor: SLATE },
-  tabText: { fontSize: 14, fontWeight: '600', color: MUTED },
-  tabTextActive: { color: SLATE_DARK, fontWeight: '800' },
-
-  banner: { borderRadius: 10, padding: 12, borderLeftWidth: 4 },
-  bannerOk: { backgroundColor: '#ECFDF5', borderLeftColor: '#10B981' },
-  bannerErr: { backgroundColor: '#FDECEA', borderLeftColor: RED },
-  bannerText: { fontSize: 13, fontWeight: '700' },
-
-  kpiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  kpi: { flexGrow: 1, flexBasis: 140, backgroundColor: WHITE, borderRadius: 14, borderWidth: 1, borderColor: BORDER, padding: 14, gap: 2 },
-  kpiValue: { fontSize: 26, fontWeight: '800', color: SLATE_DARK },
-  kpiLabel: { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.4 },
-
-  toolbar: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, alignItems: 'center' },
-  card: { backgroundColor: WHITE, borderRadius: 16, borderWidth: 1, borderColor: BORDER, overflow: 'hidden' },
-  cardHead: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, padding: 16, alignItems: 'center', backgroundColor: '#FAFBFD', borderBottomWidth: 1, borderBottomColor: '#E6E9EE' },
-  schoolName: { fontSize: 18, fontWeight: '800', color: SLATE_DARK },
-  branch: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, padding: 16, borderTopWidth: 1, borderTopColor: '#F0F2F5', alignItems: 'center' },
-  branchName: { fontSize: 15, fontWeight: '800', color: TEXT },
-  code: { fontSize: 11, fontWeight: '800', color: SLATE, backgroundColor: '#E8F0F8', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
-  meta: { fontSize: 12, color: MUTED },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  badgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
-  btn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
-  btnText: { fontSize: 13, fontWeight: '700' },
-  empty: { padding: 32, alignItems: 'center' },
-  emptyText: { color: MUTED, fontSize: 14 },
-
-  label: { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5 },
-  hint: { fontSize: 11, color: '#999' },
-  input: {
-    borderWidth: 1.5, borderColor: BORDER, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
-    fontSize: 15, color: TEXT, backgroundColor: '#FAFAFA',
-  },
-  errBox: { alignSelf: 'stretch', backgroundColor: '#FDECEA', borderRadius: 10, padding: 12, borderLeftWidth: 3, borderLeftColor: RED },
-  errText: { color: RED, fontSize: 13, fontWeight: '600' },
-
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(20,30,40,0.45)' },
-  overlayInner: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 16 },
-  modal: { backgroundColor: WHITE, borderRadius: 18, padding: 20, width: '100%', maxWidth: 620, gap: 12 },
-  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  modalTitle: { fontSize: 18, fontWeight: '800', color: SLATE_DARK, flexShrink: 1 },
-  modalFoot: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
-  formRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { borderWidth: 1.5, borderColor: BORDER, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 6 },
-  chipOn: { borderColor: SLATE, backgroundColor: '#E8F0F8' },
-  chipText: { fontSize: 12, color: MUTED, fontWeight: '600' },
-  chipTextOn: { color: SLATE_DARK, fontWeight: '800' },
+  formRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md },
+  modalFoot: { flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: space.sm },
 });
