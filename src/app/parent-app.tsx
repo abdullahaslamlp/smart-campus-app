@@ -7,6 +7,7 @@ import {
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getParentSession, setParentSession } from './parent-login';
+import { PausedScreen, useBranch } from '../lib/tenant';
 
 // ─── Haversine Distance ────────────────────────────────────────────────────────
 function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -39,6 +40,8 @@ export default function ParentApp() {
   const [authed, setAuthed] = useState(!!session);
   const [currentParentId, setCurrentParentId] = useState(session?.parentId ?? '');
   const [currentFullName, setCurrentFullName] = useState(session?.fullName ?? '');
+  const branchId = session?.branchId ?? '';
+  const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
 
   // ── Data state ──
   const [students, setStudents] = useState<any[]>([]);
@@ -77,11 +80,10 @@ export default function ParentApp() {
     setCurrentFullName(s.fullName);
     currentParentIdRef.current = s.parentId;
     fetchData(s.parentId);
-    fetchSettings();
 
     const sub = supabase
-      .channel('parent_students_' + s.parentId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => {
+      .channel('parent_students_' + s.branchId + '_' + s.parentId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `branch_id=eq.${s.branchId}` }, () => {
         fetchData(s.parentId);
       })
       .subscribe();
@@ -94,12 +96,12 @@ export default function ParentApp() {
 
   // ── Start / stop auto-poll based on dispatched state ──
   useEffect(() => {
-    if (isCheckedIn && !isReceived) {
+    if (isCheckedIn && !isReceived && branchLive) {
       startAutoPoll();
     } else {
       stopAutoPoll();
     }
-  }, [isCheckedIn, isReceived]);
+  }, [isCheckedIn, isReceived, branchLive]);
 
   const startAutoPoll = () => {
     if (pollIntervalRef.current) return; // already polling
@@ -143,6 +145,7 @@ export default function ParentApp() {
       const { data, error } = await supabase
         .from('students')
         .select('*')
+        .eq('branch_id', branchId)
         .eq('parent_id', pid);
       if (error) throw error;
       setStudents(data || []);
@@ -161,22 +164,19 @@ export default function ParentApp() {
     }
   };
 
-  const fetchSettings = async () => {
-    try {
-      const { data } = await supabase
-        .from('school_settings').select('*').eq('id', 'primary').single();
-      if (data) {
-        setSchoolLocation({ lat: data.lat, lng: data.lng });
-        schoolLocationRef.current = { lat: data.lat, lng: data.lng };
-        if (data.geofence_radius) {
-          setGeofenceRadius(data.geofence_radius);
-          geofenceRadiusRef.current = data.geofence_radius;
-        }
-      }
-    } catch (e: any) {
-      console.error('[fetchSettings]', e.message);
-    }
-  };
+  // ── Geofence settings come from the user's branch (updates live) ──
+  useEffect(() => {
+    if (!branch) return;
+    setSchoolLocation({ lat: branch.lat, lng: branch.lng });
+    schoolLocationRef.current = { lat: branch.lat, lng: branch.lng };
+    setGeofenceRadius(branch.geofence_radius);
+    geofenceRadiusRef.current = branch.geofence_radius;
+  }, [branch]);
+
+  // ── Stop the departure poll the moment the campus is paused ──
+  useEffect(() => {
+    if (branch && !branchLive) stopAutoPoll();
+  }, [branch, branchLive]);
 
   // ─── Distance update (GPS real + simulation) ──────────────────────────────
   const updateDistance = async (newDist: number) => {
@@ -185,6 +185,7 @@ export default function ParentApp() {
       await supabase
         .from('students')
         .update({ last_distance_meters: newDist })
+        .eq('branch_id', branchId)
         .eq('parent_id', currentParentId);
     } catch (e: any) {
       console.error('[updateDistance]', e.message);
@@ -215,11 +216,12 @@ export default function ParentApp() {
 
   // ─── Check-in (arrive at school) ──────────────────────────────────────────
   const handleCheckIn = async () => {
-    if (distance == null || distance > geofenceRadius) return;
+    if (!branchLive || distance == null || distance > geofenceRadius) return;
     try {
       const { error } = await supabase
         .from('students')
         .update({ status: 'dispatched' })
+        .eq('branch_id', branchId)
         .eq('parent_id', currentParentId);
       if (error) throw error;
       setIsCheckedIn(true);
@@ -234,6 +236,7 @@ export default function ParentApp() {
       const { error } = await supabase
         .from('students')
         .update({ status: 'received' })
+        .eq('branch_id', branchId)
         .eq('parent_id', pid)
         .eq('status', 'dispatched');
       if (error) throw error;
@@ -264,7 +267,11 @@ export default function ParentApp() {
 
   const isCloseEnough = distance != null && distance <= geofenceRadius;
 
-  if (!authed) {
+  if (authed && !branchLoading && !branchLive) {
+    return <PausedScreen branch={branch} onExit={handleLogout} />;
+  }
+
+  if (!authed || branchLoading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={SLATE} size="large" />
@@ -328,7 +335,7 @@ export default function ParentApp() {
       <View style={styles.topBar}>
         <View>
           <Text style={styles.topGreeting}>Hello, {currentFullName.split(' ')[0]} 👋</Text>
-          <Text style={styles.topId}>{currentParentId}</Text>
+          <Text style={styles.topId}>{currentParentId}{branch ? ` · ${branch.school_name} — ${branch.name}` : ''}</Text>
         </View>
         <Pressable style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutBtnText}>Logout</Text>

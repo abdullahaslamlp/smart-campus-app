@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../../supabase';
+import { BranchPicker, LOGIN_ERRORS, loadSession, rememberBranch, saveSession } from '../lib/tenant';
+import { useInitialBranch } from './parent-login';
 
 const SLATE = '#466179';
 const SLATE_DARK = '#2d3f50';
@@ -13,33 +15,32 @@ const RED = '#c0392b';
 const GREEN_DARK = '#065F46';
 
 // ─── Simple session store (web: sessionStorage; native: module-level var) ──────
-export let driverSession: {
+export type DriverSession = {
   driverId: string;
   driverName: string;
   vehicleType: string;
   vehicleNumber: string;
   linkedParentIds: string[];
-} | null = null;
+  branchId: string;
+  branchName: string;
+  schoolName: string;
+};
 
-export function setDriverSession(s: typeof driverSession) {
-  driverSession = s;
-  if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
-    if (s) sessionStorage.setItem('driverSession', JSON.stringify(s));
-    else sessionStorage.removeItem('driverSession');
-  }
+const DRIVER_KEY = 'driverSession_v2';
+
+export function setDriverSession(s: DriverSession | null) {
+  saveSession(DRIVER_KEY, s);
 }
 
-export function getDriverSession(): typeof driverSession {
-  if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
-    const raw = sessionStorage.getItem('driverSession');
-    if (raw) return JSON.parse(raw);
-  }
-  return driverSession;
+export function getDriverSession(): DriverSession | null {
+  const s = loadSession<DriverSession>(DRIVER_KEY);
+  return s && s.branchId ? s : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function DriverLogin() {
   const router = useRouter();
+  const [branch, setBranch] = useInitialBranch();
   const [driverId, setDriverId] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,6 +50,10 @@ export default function DriverLogin() {
   const handleLogin = async () => {
     const trimId = driverId.trim().toLowerCase();
     const trimPw = password.trim();
+    if (!branch) {
+      setError('Please select your school campus first.');
+      return;
+    }
     if (!trimId || !trimPw) {
       setError('Please enter both your Driver ID and password.');
       return;
@@ -57,40 +62,31 @@ export default function DriverLogin() {
     setLoading(true);
 
     try {
-      // ── Query transporter_accounts table ──
-      const { data, error: dbErr } = await supabase
-        .from('transporter_accounts')
-        .select('driver_id, driver_name, vehicle_type, vehicle_number, password, is_active, linked_parent_ids')
-        .eq('driver_id', trimId)
-        .single();
-
+      // ── Server-side check: campus live, account active, password hash ──
+      const { data, error: dbErr } = await supabase.rpc('login_driver', {
+        p_branch_id: branch.branch_id, p_driver_id: trimId, p_password: trimPw,
+      });
       if (dbErr) {
-        if (dbErr.code === 'PGRST116') {
-          setError('No driver account found with that Driver ID.');
-        } else {
-          setError('Connection error. Please try again.');
-          console.error('[driverLogin]', dbErr.message);
-        }
+        setError('Connection error. Please try again.');
+        console.error('[driverLogin]', dbErr.message);
         return;
       }
-
-      if (!data.is_active) {
-        setError('Your driver account has been deactivated. Contact the school office.');
-        return;
-      }
-
-      if (data.password !== trimPw) {
-        setError('Incorrect password. Please try again.');
+      if (!data?.ok) {
+        setError(LOGIN_ERRORS[data?.error] ?? 'Login failed. Please try again.');
         return;
       }
 
       // Store session and navigate to driver portal app
+      rememberBranch(branch);
       setDriverSession({
         driverId: data.driver_id,
         driverName: data.driver_name,
         vehicleType: data.vehicle_type,
         vehicleNumber: data.vehicle_number,
         linkedParentIds: data.linked_parent_ids || [],
+        branchId: data.branch_id,
+        branchName: branch.branch_name,
+        schoolName: branch.school_name,
       });
       router.replace('/driver-app' as any);
 
@@ -125,6 +121,11 @@ export default function DriverLogin() {
         ) : null}
 
         {/* Fields */}
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>School Campus</Text>
+          <BranchPicker value={branch} onChange={setBranch} />
+        </View>
+
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Driver ID</Text>
           {Platform.OS === 'web' ? (

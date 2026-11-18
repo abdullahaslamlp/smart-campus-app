@@ -7,6 +7,7 @@ import {
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getDriverSession, setDriverSession } from './driver-login';
+import { PausedScreen, useBranch } from '../lib/tenant';
 
 const SLATE = '#466179';
 const SLATE_DARK = '#2d3f50';
@@ -49,7 +50,12 @@ export default function DriverApp() {
     vehicleType: string;
     vehicleNumber: string;
     linkedParentIds: string[];
+    branchId: string;
+    branchName: string;
+    schoolName: string;
   } | null>(null);
+  const branchId = getDriverSession()?.branchId ?? '';
+  const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
 
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,12 +96,11 @@ export default function DriverApp() {
     } catch {}
 
     fetchData(s.linkedParentIds);
-    fetchSettings();
 
-    // ── Realtime subscription to students table ──
+    // ── Realtime subscription to this branch's students ──
     const sub = supabase
-      .channel('driver_students_' + s.driverId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => {
+      .channel('driver_students_' + s.branchId + '_' + s.driverId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `branch_id=eq.${s.branchId}` }, () => {
         fetchData(s.linkedParentIds);
       })
       .subscribe();
@@ -117,6 +122,7 @@ export default function DriverApp() {
       const { data, error } = await supabase
         .from('students')
         .select('*')
+        .eq('branch_id', branchId)
         .in('parent_id', pids);
       if (error) throw error;
       setStudents(data || []);
@@ -128,22 +134,14 @@ export default function DriverApp() {
     }
   };
 
-  const fetchSettings = async () => {
-    try {
-      const { data } = await supabase
-        .from('school_settings').select('*').eq('id', 'primary').single();
-      if (data) {
-        setSchoolLocation({ lat: data.lat, lng: data.lng });
-        schoolLocationRef.current = { lat: data.lat, lng: data.lng };
-        if (data.geofence_radius) {
-          setGeofenceRadius(data.geofence_radius);
-          geofenceRadiusRef.current = data.geofence_radius;
-        }
-      }
-    } catch (e: any) {
-      console.error('[driverFetchSettings]', e.message);
-    }
-  };
+  // ── Geofence settings come from the driver's branch (updates live) ──
+  useEffect(() => {
+    if (!branch) return;
+    setSchoolLocation({ lat: branch.lat, lng: branch.lng });
+    schoolLocationRef.current = { lat: branch.lat, lng: branch.lng };
+    setGeofenceRadius(branch.geofence_radius);
+    geofenceRadiusRef.current = branch.geofence_radius;
+  }, [branch]);
 
   // ── Auto-poll: start when any student is dispatched but not yet received ──
   const dispatchedStudents = students.filter(s => s.status === 'dispatched');
@@ -152,12 +150,12 @@ export default function DriverApp() {
   const allReceived = dispatchedStudents.length === 0 && receivedStudents.length > 0 && students.filter(s => s.status === 'waiting').length === 0;
 
   useEffect(() => {
-    if (dispatchedStudents.length > 0) {
+    if (dispatchedStudents.length > 0 && branchLive) {
       startAutoPoll();
     } else {
       stopAutoPoll();
     }
-  }, [dispatchedStudents.length]);
+  }, [dispatchedStudents.length, branchLive]);
 
   const startAutoPoll = () => {
     if (pollIntervalRef.current) return;
@@ -230,7 +228,7 @@ export default function DriverApp() {
 
   // ── Dispatch all waiting students assigned to this driver ──
   const handleCheckInAll = async () => {
-    if (!driverInfo || !driverInfo.linkedParentIds.length) return;
+    if (!branchLive || !driverInfo || !driverInfo.linkedParentIds.length) return;
     if (!isCloseEnough) {
       Alert.alert(
         '🚫 Geofence Restriction',
@@ -249,6 +247,7 @@ export default function DriverApp() {
       const { error } = await supabase
         .from('students')
         .update({ status: 'dispatched' })
+        .eq('branch_id', branchId)
         .in('parent_id', driverInfo.linkedParentIds)
         .eq('status', 'waiting');
       if (error) throw error;
@@ -265,6 +264,7 @@ export default function DriverApp() {
       const { error } = await supabase
         .from('students')
         .update({ status: 'received' })
+        .eq('branch_id', branchId)
         .in('parent_id', pids)
         .eq('status', 'dispatched');
       if (error) throw error;
@@ -293,7 +293,11 @@ export default function DriverApp() {
     router.replace('/');
   };
 
-  if (!authed || !driverInfo) {
+  if (authed && !branchLoading && !branchLive) {
+    return <PausedScreen branch={branch} onExit={handleLogout} />;
+  }
+
+  if (!authed || !driverInfo || branchLoading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={GREEN_DARK} size="large" />

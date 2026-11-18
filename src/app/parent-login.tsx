@@ -1,7 +1,10 @@
-import { useState } from 'react';
-import { useRouter } from 'expo-router';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../../supabase';
+import {
+  BranchOption, BranchPicker, LOGIN_ERRORS, lastBranch, loadSession, rememberBranch, saveSession, searchBranches,
+} from '../lib/tenant';
 
 const SLATE = '#466179';
 const SLATE_DARK = '#2d3f50';
@@ -12,27 +15,45 @@ const BORDER = '#c3c7cd';
 const RED = '#c0392b';
 
 // ─── Simple session store (web: sessionStorage; native: module-level var) ──────
-export let parentSession: { parentId: string; fullName: string } | null = null;
+export type ParentSession = {
+  parentId: string;
+  fullName: string;
+  branchId: string;
+  branchName: string;
+  schoolName: string;
+};
 
-export function setParentSession(s: typeof parentSession) {
-  parentSession = s;
-  if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
-    if (s) sessionStorage.setItem('parentSession', JSON.stringify(s));
-    else sessionStorage.removeItem('parentSession');
-  }
+const PARENT_KEY = 'parentSession_v2';
+
+export function setParentSession(s: ParentSession | null) {
+  saveSession(PARENT_KEY, s);
 }
 
-export function getParentSession(): typeof parentSession {
-  if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
-    const raw = sessionStorage.getItem('parentSession');
-    if (raw) return JSON.parse(raw);
-  }
-  return parentSession;
+export function getParentSession(): ParentSession | null {
+  const s = loadSession<ParentSession>(PARENT_KEY);
+  return s && s.branchId ? s : null;
+}
+
+// Pre-select a campus from ?branch=CODE, falling back to the last one used on this device.
+export function useInitialBranch() {
+  const { branch } = useLocalSearchParams<{ branch?: string }>();
+  const [selected, setSelected] = useState<BranchOption | null>(() => (branch ? null : lastBranch()));
+  useEffect(() => {
+    if (!branch) return;
+    searchBranches(String(branch))
+      .then(r => {
+        const exact = r.find(b => b.branch_code.toLowerCase() === String(branch).toLowerCase());
+        if (exact) setSelected(exact);
+      })
+      .catch(() => {});
+  }, [branch]);
+  return [selected, setSelected] as const;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ParentLogin() {
   const router = useRouter();
+  const [branch, setBranch] = useInitialBranch();
   const [parentId, setParentId] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -43,6 +64,10 @@ export default function ParentLogin() {
     // ── Whitebox: basic client-side validation ──
     const trimId = parentId.trim().toLowerCase();
     const trimPw = password.trim();
+    if (!branch) {
+      setError('Please select your school campus first.');
+      return;
+    }
     if (!trimId || !trimPw) {
       setError('Please enter both your Parent ID and password.');
       return;
@@ -51,39 +76,26 @@ export default function ParentLogin() {
     setLoading(true);
 
     try {
-      // ── Query parent_accounts table ──
-      const { data, error: dbErr } = await supabase
-        .from('parent_accounts')
-        .select('parent_id, full_name, password, is_active')
-        .eq('parent_id', trimId)
-        .single();
-
-      // ── Whitebox: handle DB errors separately from "not found" ──
+      // ── Server-side check: campus live, account active, password hash ──
+      const { data, error: dbErr } = await supabase.rpc('login_parent', {
+        p_branch_id: branch.branch_id, p_parent_id: trimId, p_password: trimPw,
+      });
       if (dbErr) {
-        if (dbErr.code === 'PGRST116') {
-          // No row found
-          setError('No account found with that Parent ID.');
-        } else {
-          setError('Connection error. Please try again.');
-          console.error('[login]', dbErr.message);
-        }
+        setError('Connection error. Please try again.');
+        console.error('[login]', dbErr.message);
         return;
       }
-
-      // ── Greybox: account must be active ──
-      if (!data.is_active) {
-        setError('Your account has been deactivated. Contact the school office.');
-        return;
-      }
-
-      // ── Blackbox: password check ──
-      if (data.password !== trimPw) {
-        setError('Incorrect password. Please try again.');
+      if (!data?.ok) {
+        setError(LOGIN_ERRORS[data?.error] ?? 'Login failed. Please try again.');
         return;
       }
 
       // ── Success: store session and navigate ──
-      setParentSession({ parentId: data.parent_id, fullName: data.full_name });
+      rememberBranch(branch);
+      setParentSession({
+        parentId: data.parent_id, fullName: data.full_name, branchId: data.branch_id,
+        branchName: branch.branch_name, schoolName: branch.school_name,
+      });
       router.replace('/parent-app');
 
     } catch (e: any) {
@@ -117,6 +129,11 @@ export default function ParentLogin() {
         ) : null}
 
         {/* Fields */}
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>School Campus</Text>
+          <BranchPicker value={branch} onChange={setBranch} />
+        </View>
+
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Parent ID</Text>
           {Platform.OS === 'web' ? (
