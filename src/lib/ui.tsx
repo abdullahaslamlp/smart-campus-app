@@ -206,6 +206,12 @@ export function PasswordField(props: TextInputProps & { label: string; hint?: st
 }
 
 // ─── Feedback ─────────────────────────────────────────────────────────────────
+/** True for "text", 3, and mixed JSX text like {`all ${n}`} or `all {n} children` (an array of primitives). */
+function isTextLike(node: ReactNode): boolean {
+  const prim = (x: unknown) => typeof x === 'string' || typeof x === 'number';
+  return prim(node) || (Array.isArray(node) && node.length > 0 && node.every(prim));
+}
+
 export function Notice({ tone = 'info', title, children }: { tone?: 'info' | 'error' | 'warn' | 'success'; title?: string; children?: ReactNode }) {
   const t = {
     info: { bg: color.accentSoft, fg: color.accent, Icon: Info },
@@ -218,7 +224,7 @@ export function Notice({ tone = 'info', title, children }: { tone?: 'info' | 'er
       <t.Icon size={18} color={t.fg} strokeWidth={ICON_STROKE} style={{ marginTop: 1 }} />
       <View style={{ flex: 1, gap: 2 }}>
         {title ? <Text style={[type.label, { color: t.fg }]}>{title}</Text> : null}
-        {typeof children === 'string' ? <Text style={[type.small, { color: t.fg }]}>{children}</Text> : children}
+        {isTextLike(children) ? <Text style={[type.small, { color: t.fg }]}>{children}</Text> : children}
       </View>
     </View>
   );
