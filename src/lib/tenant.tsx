@@ -63,6 +63,8 @@ export interface BranchInfo {
   lat: number;
   lng: number;
   geofence_radius: number;
+  /** Installation-demo switch: shows the simulate-distance shortcut in the parent and driver apps. */
+  demo_mode?: boolean;
 }
 
 export const PAUSED_MESSAGE = 'This campus portal is temporarily paused. Please contact administration.';

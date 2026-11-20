@@ -105,6 +105,8 @@ export default function AdminPortal() {
   const [radiusSaved, setRadiusSaved] = useState(false);
   const [isMapOpen, setIsMapOpen] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+  const [demoSaving, setDemoSaving] = useState(false);
 
   // ── Add Student modal ──
   const [addStudentOpen, setAddStudentOpen] = useState(false);
@@ -341,6 +343,7 @@ export default function AdminPortal() {
     setSchoolLocation({ lat: branch.lat, lng: branch.lng });
     if (!isMapOpen) setTempLocation({ lat: branch.lat, lng: branch.lng });
     setGeofenceRadius(branch.geofence_radius);
+    setDemoMode(!!branch.demo_mode);
     if (!radiusSaved) setTempRadius(branch.geofence_radius);
   }, [branch?.id, branch?.lat, branch?.lng, branch?.geofence_radius]);
 
@@ -381,6 +384,17 @@ export default function AdminPortal() {
       setTimeout(() => setRadiusSaved(false), 2000);
       notify('success', `Pickup radius saved (${tempRadius} m).`);
     } catch (e: any) { showError('Could not save radius', e); }
+  };
+
+  const toggleDemoMode = async () => {
+    const next = !demoMode;
+    setDemoSaving(true);
+    try {
+      await adminRpc('admin_set_demo_mode', { p_enabled: next });
+      setDemoMode(next);
+      notify('success', next ? 'Demo mode is on.' : 'Demo mode is off.');
+    } catch (e: any) { showError('Could not change demo mode', e); }
+    finally { setDemoSaving(false); }
   };
 
   // ─── Add Student ──────────────────────────────────────────────────────────
@@ -1026,6 +1040,21 @@ export default function AdminPortal() {
             <Button label={dirty ? 'Save radius' : 'Saved'} disabled={!dirty} onPress={saveGeofenceRadius} />
           </Card>
         </View>
+
+        <Card style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.lg }}>
+          <View style={{ flex: 1, minWidth: 260, gap: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <Text style={type.heading}>Demo mode</Text>
+              <Pill label={demoMode ? 'On' : 'Off'} fg={demoMode ? color.warn : color.muted} bg={demoMode ? color.warnSoft : color.waitingSoft} />
+            </View>
+            <Text style={type.small}>
+              Shows an “Outside / Inside” shortcut in the parent and driver apps so you can demonstrate check-in without
+              standing at the school. Real families should never see it, so leave it off in normal use.
+            </Text>
+          </View>
+          <Button label={demoMode ? 'Turn off demo mode' : 'Turn on demo mode'} variant={demoMode ? 'secondary' : 'primary'}
+            loading={demoSaving} onPress={toggleDemoMode} />
+        </Card>
       </>
     );
   };

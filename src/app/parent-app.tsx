@@ -1,26 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getParentSession, setParentSession } from './parent-login';
 import { isSessionError, rpcMessage, useBranch, useBranchPings } from '../lib/tenant';
+import { DepartureTracker, POLL_SECONDS, haversine, judgeFix } from '../lib/departure';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
   StudentRow, color, space, type,
 } from '../lib/ui';
-
-// ─── Haversine Distance ────────────────────────────────────────────────────────
-function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 export default function ParentApp() {
   const router = useRouter();
@@ -47,6 +36,9 @@ export default function ParentApp() {
   const [kidsArrivedLoading, setKidsArrivedLoading] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [autoConfirmed, setAutoConfirmed] = useState(false);
+  const [locationWarning, setLocationWarning] = useState<string | null>(null);
+  const trackerRef = useRef(new DepartureTracker());
 
   // ── Refs for auto-poll ──
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -92,18 +84,25 @@ export default function ParentApp() {
 
   // ── Start / stop auto-poll based on dispatched state ──
   useEffect(() => {
-    if (isCheckedIn && !isReceived && branchLive) {
-      startAutoPoll();
-    } else {
-      stopAutoPoll();
-    }
+    if (!(isCheckedIn && !isReceived && branchLive)) { stopAutoPoll(); return; }
+    startAutoPoll();
+    // Browsers pause timers in background tabs: check again as soon as the page is visible.
+    if (Platform.OS !== 'web') return;
+    const onVisible = () => { if (document.visibilityState === 'visible') silentLocationCheck(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [isCheckedIn, isReceived, branchLive]);
+
+  // Being measured inside the pickup zone is what makes a later departure count.
+  useEffect(() => {
+    if (distance != null && distance <= geofenceRadius) trackerRef.current.noteInside();
+  }, [distance, geofenceRadius]);
 
   const startAutoPoll = () => {
     if (pollIntervalRef.current) return; // already polling
     pollIntervalRef.current = setInterval(() => {
       silentLocationCheck();
-    }, 30000); // every 30 seconds
+    }, POLL_SECONDS * 1000);
   };
 
   const stopAutoPoll = () => {
@@ -111,6 +110,7 @@ export default function ParentApp() {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
+    trackerRef.current.reset();
   };
 
   // ── Silent location check (used by auto-poll) ──
@@ -120,16 +120,20 @@ export default function ParentApp() {
       return;
     }
     try {
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== 'granted') {
+        setLocationWarning('Location access is off, so pickup can’t be confirmed automatically. Allow location, or tap “I have my children” yourself.');
+        return;
+      }
+      setLocationWarning(null);
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const dist = haversine(
         loc.coords.latitude, loc.coords.longitude,
         schoolLocationRef.current.lat, schoolLocationRef.current.lng
       );
-      const rounded = Math.round(dist);
-      // If parent has driven outside the geofence → kids have boarded, auto-mark received
-      if (rounded > geofenceRadiusRef.current) {
-        await markKidsReceived();
-      }
+      // Clearly outside the pickup zone on consecutive checks → the children have been collected.
+      const verdict = judgeFix(dist, loc.coords.accuracy, geofenceRadiusRef.current);
+      if (trackerRef.current.feed(verdict)) await markKidsReceived(true);
     } catch (e: any) {
       if (isSessionError(e)) handleLogout();
       else console.warn('[AutoPoll] Location check failed:', e.message);
@@ -227,9 +231,10 @@ export default function ParentApp() {
   };
 
   // ─── Kids Arrived (kids boarded, parent leaving school) ───────────────────
-  const markKidsReceived = async (_pid?: string) => {
+  const markKidsReceived = async (auto = false) => {
     const { error } = await supabase.rpc('parent_mark_received', { p_token: token });
     if (error) throw error;
+    if (auto) setAutoConfirmed(true);
     setIsReceived(true);
     stopAutoPoll();
     fetchData();
@@ -269,7 +274,9 @@ export default function ParentApp() {
     if (isReceived) {
       return (
         <Notice tone="success" title="Pickup confirmed">
-          The school has been told your children are with you.
+          {autoConfirmed
+            ? 'We noticed you left the school area, so pickup was confirmed for you.'
+            : 'The school has been told your children are with you.'}
         </Notice>
       );
     }
@@ -303,14 +310,15 @@ export default function ParentApp() {
       <Page bottomInset={140}>
         <View style={{ gap: space.md }}>
           {notice ? <Notice tone="error">{notice}</Notice> : null}
+          {locationWarning && isCheckedIn && !isReceived ? <Notice tone="warn">{locationWarning}</Notice> : null}
           <DistancePanel
             distance={distance}
             radius={geofenceRadius}
             locating={gpsLoading}
             onLocate={checkRealGPS}
-            onSimulate={updateDistance}
+            onSimulate={branch?.demo_mode ? updateDistance : undefined}
             footnote={isCheckedIn && !isReceived
-              ? 'When you drive away from the school, pickup is confirmed automatically.'
+              ? 'Keep this page open. When you drive away from the school, pickup is confirmed automatically.'
               : undefined}
           />
         </View>

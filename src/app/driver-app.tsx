@@ -1,26 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getDriverSession, setDriverSession } from './driver-login';
 import { isSessionError, rpcMessage, useBranch, useBranchPings } from '../lib/tenant';
+import { DepartureTracker, POLL_SECONDS, haversine, judgeFix } from '../lib/departure';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
   StudentRow, color, space, type,
 } from '../lib/ui';
-
-// ─── Haversine Distance Formula ────────────────────────────────────────────────
-function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 interface Student {
   id: string;
@@ -59,6 +48,9 @@ export default function DriverApp() {
   const [locationStatus, requestLocationPermission] = Location.useForegroundPermissions();
   const [gpsLoading, setGpsLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [autoConfirmed, setAutoConfirmed] = useState(false);
+  const [locationWarning, setLocationWarning] = useState<string | null>(null);
+  const trackerRef = useRef(new DepartureTracker());
 
   // ── Refs for auto-poll ──
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -139,18 +131,25 @@ export default function DriverApp() {
   const allReceived = dispatchedStudents.length === 0 && receivedStudents.length > 0 && students.filter(s => s.status === 'waiting').length === 0;
 
   useEffect(() => {
-    if (dispatchedStudents.length > 0 && branchLive) {
-      startAutoPoll();
-    } else {
-      stopAutoPoll();
-    }
+    if (!(dispatchedStudents.length > 0 && branchLive)) { stopAutoPoll(); return; }
+    startAutoPoll();
+    // Browsers pause timers in background tabs: check again as soon as the page is visible.
+    if (Platform.OS !== 'web') return;
+    const onVisible = () => { if (document.visibilityState === 'visible') silentLocationCheck(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [dispatchedStudents.length, branchLive]);
+
+  // Being measured inside the pickup zone is what makes a later departure count.
+  useEffect(() => {
+    if (distance != null && distance <= geofenceRadius) trackerRef.current.noteInside();
+  }, [distance, geofenceRadius]);
 
   const startAutoPoll = () => {
     if (pollIntervalRef.current) return;
     pollIntervalRef.current = setInterval(() => {
       silentLocationCheck();
-    }, 30000);
+    }, POLL_SECONDS * 1000);
   };
 
   const stopAutoPoll = () => {
@@ -158,21 +157,26 @@ export default function DriverApp() {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
+    trackerRef.current.reset();
   };
 
   const silentLocationCheck = async () => {
     if (!linkedParentIdsRef.current.length) return;
     try {
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== 'granted') {
+        setLocationWarning('Location access is off, so pickup can’t be confirmed automatically. Allow location, or confirm pickup yourself.');
+        return;
+      }
+      setLocationWarning(null);
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const dist = haversine(
         loc.coords.latitude, loc.coords.longitude,
         schoolLocationRef.current.lat, schoolLocationRef.current.lng
       );
-      const rounded = Math.round(dist);
-      // If driver has left the geofence → kids are safely in vehicle, auto-mark received
-      if (rounded > geofenceRadiusRef.current) {
-        await markKidsReceived();
-      }
+      // Clearly outside the pickup zone on consecutive checks → the children are in the vehicle.
+      const verdict = judgeFix(dist, loc.coords.accuracy, geofenceRadiusRef.current);
+      if (trackerRef.current.feed(verdict)) await markKidsReceived(true);
     } catch (e: any) {
       if (isSessionError(e)) handleLogout();
       else console.warn('[AutoPoll] Driver location check failed:', e.message);
@@ -244,9 +248,10 @@ export default function DriverApp() {
   };
 
   // ── Kids Arrived — driver confirms kids have boarded ──
-  const markKidsReceived = async () => {
+  const markKidsReceived = async (auto = false) => {
     const { error } = await supabase.rpc('driver_mark_received', { p_token: token });
     if (error) throw error;
+    if (auto) setAutoConfirmed(true);
     stopAutoPoll();
     fetchData();
   };
@@ -284,7 +289,9 @@ export default function DriverApp() {
     if (allReceived) {
       return (
         <Notice tone="success" title="Everyone is on board">
-          The school has been told all {receivedCount} children were picked up.
+          {autoConfirmed
+            ? `We noticed you left the school area, so all ${receivedCount} children were confirmed as picked up.`
+            : `The school has been told all ${receivedCount} children were picked up.`}
         </Notice>
       );
     }
@@ -321,6 +328,7 @@ export default function DriverApp() {
       <Page bottomInset={140}>
         <View style={{ gap: space.md }}>
           {notice ? <Notice tone="error">{notice}</Notice> : null}
+          {locationWarning && dispatchedCount > 0 ? <Notice tone="warn">{locationWarning}</Notice> : null}
 
           <Card padded={false} style={{ flexDirection: 'row' }}>
             {[
@@ -343,9 +351,9 @@ export default function DriverApp() {
             radius={geofenceRadius}
             locating={gpsLoading}
             onLocate={checkRealGPS}
-            onSimulate={updateDistance}
+            onSimulate={branch?.demo_mode ? updateDistance : undefined}
             footnote={dispatchedCount > 0
-              ? 'When you drive away from the school, pickup is confirmed automatically.'
+              ? 'Keep this page open. When you drive away from the school, pickup is confirmed automatically.'
               : undefined}
           />
         </View>
