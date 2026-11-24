@@ -4,7 +4,7 @@ import { Platform, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getParentSession, setParentSession } from './parent-login';
-import { isSessionError, rpcMessage, useBranch, useBranchPings } from '../lib/tenant';
+import { isSessionError, rpcMessage, useBranch, usePoll } from '../lib/tenant';
 import { DepartureTracker, POLL_SECONDS, haversine, judgeFix } from '../lib/departure';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
@@ -71,10 +71,10 @@ export default function ParentApp() {
     };
   }, []);
 
-  // ── Live updates: the campus broadcasts a contentless ping on every change ──
-  useBranchPings(branchId, what => {
-    if (what === 'students') fetchData(currentParentIdRef.current);
-  });
+  // ── Keep the page current by polling: often while a pickup is in progress, rarely otherwise,
+  // and not at all once pickup is confirmed. (No live connection is held, so thousands of
+  // families can use the app at once.)
+  usePoll(() => fetchData(), { enabled: !isReceived, fast: isCheckedIn, fastMs: 10000, slowMs: 30000 });
 
   // A session the server no longer accepts (expired, account deactivated) signs the parent out.
   const handleRpcError = (e: any, prefix: string) => {
@@ -141,7 +141,6 @@ export default function ParentApp() {
   };
 
   const fetchData = async (_pid?: string) => {
-    setLoadingStudents(true);
     try {
       const { data: state, error } = await supabase.rpc('parent_state', { p_token: token });
       if (error) throw error;

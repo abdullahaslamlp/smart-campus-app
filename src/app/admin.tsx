@@ -77,7 +77,7 @@ export default function AdminPortal() {
   const [loginLoading, setLoginLoading] = useState(false);
   const branchId = session?.branchId ?? null;
   const pinAuthed = !!branchId;
-  const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId);
+  const { branch, loading: branchLoading, live: branchLive } = useBranch(branchId, { live: true });
 
   // ── App state ──
   const [students, setStudents] = useState<Student[]>([]);

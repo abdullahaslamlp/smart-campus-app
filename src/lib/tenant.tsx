@@ -1,6 +1,6 @@
 // Shared multi-tenant helpers: session storage, branch search, live branch status, paused screen.
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../../supabase';
 
 // ─── Session storage (web: sessionStorage; native: in-memory) ────────────────
@@ -91,19 +91,124 @@ export async function fetchBranch(branchId: string): Promise<BranchInfo | null> 
 
 // ─── Live branch status ──────────────────────────────────────────────────────
 // Re-reads the branch whenever its row or its school's row changes, so a pause
-// in the Super Admin portal blocks an already-open app immediately.
-const BRANCH_POLL_MS = 15000;
+// in the Super Admin portal blocks an already-open app within a few seconds.
+// ─── Polling that is gentle on the server ────────────────────────────────────
+// Parents and drivers do not hold a live connection (a free Supabase plan allows only a
+// couple of hundred at once). They poll instead, and the poll:
+//   * runs at a fast rate only while something is happening, and a slow rate otherwise
+//   * stops while the page or app is in the background
+//   * refreshes once, immediately, when the user comes back
+//   * is randomly offset and varied, so thousands of apps never hit the server together
+const isBackground = () =>
+  Platform.OS === 'web' ? typeof document !== 'undefined' && document.visibilityState === 'hidden' : AppState.currentState !== 'active';
+
+/** Call `cb` whenever the page / app returns to the foreground. */
+export function onForeground(cb: () => void): () => void {
+  if (Platform.OS === 'web') {
+    if (typeof document === 'undefined') return () => {};
+    const handler = () => { if (document.visibilityState === 'visible') cb(); };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }
+  const sub = AppState.addEventListener('change', state => { if (state === 'active') cb(); });
+  return () => sub.remove();
+}
+
+export function usePoll(
+  fn: () => void | Promise<void>,
+  opts: { enabled: boolean; fast: boolean; fastMs: number; slowMs: number },
+) {
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+
+  // A returning user always gets fresh data, even when polling has stopped.
+  useEffect(() => onForeground(() => { void fnRef.current(); }), []);
+
+  useEffect(() => {
+    if (!opts.enabled) return;
+    let timer: ReturnType<typeof setTimeout>;
+    let stopped = false;
+    const interval = () => (opts.fast ? opts.fastMs : opts.slowMs) * (0.8 + Math.random() * 0.4);
+    const tick = async () => {
+      if (stopped) return;
+      if (!isBackground()) { try { await fnRef.current(); } catch { /* the caller reports its own errors */ } }
+      if (!stopped) timer = setTimeout(tick, interval());
+    };
+    timer = setTimeout(tick, interval());
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [opts.enabled, opts.fast, opts.fastMs, opts.slowMs]);
+}
+
+// Fallback status check. The live pings below cover urgent changes, so this can be slow;
+// each client also starts at a random point so thousands of apps never poll in step.
+const BRANCH_POLL_MS = 30000;
 
 // ─── Change pings ────────────────────────────────────────────────────────────
 // Database triggers broadcast an empty 'changed' event on topic 'branch:<id>'
 // (payload: { what: <table name> }). No row data is sent; clients refetch
 // through the token-checked RPCs. Returns an unsubscribe function.
-export function subscribeBranchPings(branchId: string, onPing: (what: string) => void): () => void {
-  const ch = supabase
-    .channel('branch:' + branchId)
-    .on('broadcast', { event: 'changed' }, msg => onPing(String(msg.payload?.what ?? '')))
-    .subscribe();
-  return () => { supabase.removeChannel(ch); };
+//
+// Every change at a campus reaches every open app there, and each app answers by
+// reloading. Left alone, the work grows with (apps × changes) and a busy dismissal
+// would flood the server. So pings are throttled per browser:
+//   * one shared channel per campus, however many components listen
+//   * pings are merged: a listener hears each kind of change at most once per window
+//   * a random delay spreads the reloads of different apps over a couple of seconds
+//   * at most one reload per PING_MIN_GAP_MS, which caps the load per app no matter
+//     how fast changes arrive
+export const PING_JITTER_MS = 2000;
+export const PING_MIN_GAP_MS = 4000;
+
+type PingListener = (what: string) => void;
+interface PingHub {
+  channel: ReturnType<typeof supabase.channel>;
+  listeners: Set<PingListener>;
+  pending: Set<string>;
+  timer: ReturnType<typeof setTimeout> | null;
+  lastFire: number;
+}
+const hubs = new Map<string, PingHub>();
+
+function flushHub(hub: PingHub) {
+  hub.timer = null;
+  hub.lastFire = Date.now();
+  const kinds = [...hub.pending];
+  hub.pending.clear();
+  kinds.forEach(what => hub.listeners.forEach(fn => fn(what)));
+}
+
+function schedule(hub: PingHub) {
+  if (hub.timer) return; // already scheduled: merge into that reload
+  const earliest = hub.lastFire + PING_MIN_GAP_MS;
+  const delay = Math.max(Math.random() * PING_JITTER_MS, earliest - Date.now());
+  hub.timer = setTimeout(() => flushHub(hub), delay);
+}
+
+export function subscribeBranchPings(branchId: string, onPing: PingListener): () => void {
+  let hub = hubs.get(branchId);
+  if (!hub) {
+    const created: PingHub = {
+      channel: supabase.channel('branch:' + branchId), listeners: new Set(), pending: new Set(), timer: null, lastFire: 0,
+    };
+    created.channel
+      .on('broadcast', { event: 'changed' }, msg => {
+        created.pending.add(String(msg.payload?.what ?? ''));
+        schedule(created);
+      })
+      .subscribe();
+    hubs.set(branchId, created);
+    hub = created;
+  }
+  hub.listeners.add(onPing);
+  const mine = hub;
+  return () => {
+    mine.listeners.delete(onPing);
+    if (mine.listeners.size === 0) {
+      if (mine.timer) clearTimeout(mine.timer);
+      supabase.removeChannel(mine.channel);
+      hubs.delete(branchId);
+    }
+  };
 }
 
 // Subscribe for the lifetime of a component; the latest callback is always used.
@@ -145,34 +250,35 @@ export function rpcMessage(e: any): string {
 // The session is no longer usable → the screen should sign out.
 export const isSessionError = (e: any) => ['session_expired', 'inactive'].includes(rpcErrorCode(e) ?? '');
 
-export function useBranch(branchId: string | null | undefined) {
+export function useBranch(branchId: string | null | undefined, options: { live?: boolean } = {}) {
   const [branch, setBranch] = useState<BranchInfo | null>(null);
   const [loading, setLoading] = useState(!!branchId);
+  const liveUpdates = !!options.live;
+
+  const load = async () => {
+    if (!branchId) return;
+    try {
+      setBranch(await fetchBranch(branchId));
+    } catch (e: any) {
+      console.error('[useBranch]', e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!branchId) { setLoading(false); return; }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const b = await fetchBranch(branchId);
-        if (!cancelled) setBranch(b);
-      } catch (e: any) {
-        console.error('[useBranch]', e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
     load();
-
-    const unsubscribe = subscribeBranchPings(branchId, what => {
+    // Only staff screens keep a live connection; they see a pause or resume within seconds.
+    if (!liveUpdates) return;
+    return subscribeBranchPings(branchId, what => {
       if (what === 'branches' || what === 'schools') load();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId, liveUpdates]);
 
-    // Fallback: broadcast delivery is not guaranteed, so re-check status periodically.
-    const poll = setInterval(load, BRANCH_POLL_MS);
-
-    return () => { cancelled = true; clearInterval(poll); unsubscribe(); };
-  }, [branchId]);
+  // Everyone else (parents, drivers) learns of a pause on the next check.
+  usePoll(load, { enabled: !!branchId, fast: false, fastMs: BRANCH_POLL_MS, slowMs: BRANCH_POLL_MS });
 
   const live = !!branch && branch.status === 'active';
   return { branch, loading, live };

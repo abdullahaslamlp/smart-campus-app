@@ -4,7 +4,7 @@ import { Platform, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { supabase } from '../../supabase';
 import { getDriverSession, setDriverSession } from './driver-login';
-import { isSessionError, rpcMessage, useBranch, useBranchPings } from '../lib/tenant';
+import { isSessionError, rpcMessage, useBranch, usePoll } from '../lib/tenant';
 import { DepartureTracker, POLL_SECONDS, haversine, judgeFix } from '../lib/departure';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
@@ -87,11 +87,6 @@ export default function DriverApp() {
     };
   }, []);
 
-  // ── Live updates: refetch on the campus ping for students / driver accounts ──
-  useBranchPings(branchId, what => {
-    if (what === 'students' || what === 'transporter_accounts') fetchData();
-  });
-
   // Students + the driver's current route come from the server (route edits by the admin apply live).
   const fetchData = async () => {
     try {
@@ -129,6 +124,9 @@ export default function DriverApp() {
   const receivedStudents = students.filter(s => s.status === 'received');
   const allDispatched = dispatchedStudents.length > 0 || receivedStudents.length > 0;
   const allReceived = dispatchedStudents.length === 0 && receivedStudents.length > 0 && students.filter(s => s.status === 'waiting').length === 0;
+
+  // Poll often while students are on the way, rarely otherwise, and stop once everyone is collected.
+  usePoll(() => fetchData(), { enabled: !allReceived, fast: dispatchedStudents.length > 0, fastMs: 10000, slowMs: 30000 });
 
   useEffect(() => {
     if (!(dispatchedStudents.length > 0 && branchLive)) { stopAutoPoll(); return; }
