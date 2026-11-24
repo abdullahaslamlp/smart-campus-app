@@ -43,3 +43,7 @@ example
 /android
 
 .vercel
+
+# Cloudflare
+.wrangler
+.dev.vars*

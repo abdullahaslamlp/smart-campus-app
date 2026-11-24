@@ -1,0 +1,14 @@
+{
+  // SafePass on Cloudflare: the static web export (dist/) served by Workers static assets.
+  // Vercel keeps serving the same dist/ in parallel; nothing here affects it.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "safepass",
+  "compatibility_date": "2026-11-24",
+  "assets": {
+    "directory": "./dist",
+    // /admin → admin.html, /parent-login → parent-login.html (same clean URLs as Vercel)
+    "html_handling": "auto-trailing-slash",
+    // Unknown URLs get the app's 404 page (copied to dist/404.html by scripts/prepare-cloudflare.mjs)
+    "not_found_handling": "404-page"
+  }
+}
