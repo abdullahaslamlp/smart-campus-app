@@ -1,9 +1,9 @@
 // SafePass design system: tokens + small shared components used by the
 // landing, login and parent / driver screens.
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput,
-  TextInputProps, View, ViewStyle,
+  ActivityIndicator, Animated, PanResponder, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput,
+  TextInputProps, View, ViewStyle, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -20,7 +20,7 @@ export const ICON_STROKE = 2;
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 export const color = {
   bg: '#F6F7F9',
-  sky: '#EAF5FF',
+  sky: '#F2F0EA',
   surface: '#FFFFFF',
   sunken: '#F0F2F5',
   border: '#E3E6EB',
@@ -38,8 +38,8 @@ export const color = {
   warnSoft: '#FFF5DB',
   // dismissal statuses
   waiting: '#5B6673', waitingSoft: '#EEF0F3',
-  sent: '#1D5FA8', sentSoft: '#E6F0FB',
-  done: '#16794A', doneSoft: '#E5F4EC',
+  sent: '#4A6785', sentSoft: '#E7ECF2',
+  done: '#3E7D54', doneSoft: '#E6EFE8',
 };
 
 export const radius = { sm: 6, md: 10, lg: 14, pill: 999 };
@@ -150,7 +150,7 @@ export function Button({ label, onPress, variant = 'primary', loading, disabled,
 
 const buttonVariants: Record<ButtonVariant, { bg: string; fg: string; border: string; pressed: string }> = {
   primary: { bg: color.accent, fg: '#FFFFFF', border: color.accent, pressed: color.accentPressed },
-  success: { bg: color.done, fg: '#FFFFFF', border: color.done, pressed: '#11603A' },
+  success: { bg: color.done, fg: '#FFFFFF', border: color.done, pressed: '#2F6342' },
   secondary: { bg: color.surface, fg: color.ink, border: color.borderStrong, pressed: color.sunken },
   ghost: { bg: 'transparent', fg: color.accent, border: 'transparent', pressed: color.accentSoft },
   danger: { bg: 'transparent', fg: color.danger, border: 'transparent', pressed: color.dangerSoft },
@@ -261,16 +261,91 @@ export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
   );
 }
 
-/** One row of the children / route list. */
-export function StudentRow({ name, meta, status, last }: { name: string; meta: string; status: DismissalStatus; last?: boolean }) {
+/**
+ * Slide the knob to the end to confirm. Used on phones, where a stray tap on a button is
+ * easy and a deliberate slide is not. Screen readers and keyboards can activate it directly.
+ */
+export function SlideToConfirm({ label, onConfirm, busy }: { label: string; onConfirm: () => void; busy?: boolean }) {
+  const KNOB = 40;
+  const PAD = 4;
+  const [width, setWidth] = useState(0);
+  const x = useRef(new Animated.Value(0)).current;
+  const maxRef = useRef(0);
+  const busyRef = useRef(!!busy);
+  const confirmRef = useRef(onConfirm);
+  busyRef.current = !!busy;
+  confirmRef.current = onConfirm;
+  const max = Math.max(0, width - KNOB - PAD * 2);
+  maxRef.current = max;
+
+  const pan = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => !busyRef.current,
+    onMoveShouldSetPanResponder: () => !busyRef.current,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, g) => x.setValue(Math.max(0, Math.min(g.dx, maxRef.current))),
+    onPanResponderRelease: (_, g) => {
+      if (maxRef.current > 0 && g.dx >= maxRef.current * 0.8) {
+        Animated.timing(x, { toValue: maxRef.current, duration: 90, useNativeDriver: false }).start(() => confirmRef.current());
+      } else {
+        Animated.spring(x, { toValue: 0, useNativeDriver: false }).start();
+      }
+    },
+  })).current;
+
+  // After a confirmation attempt finishes (e.g. it failed), the knob returns to the start.
+  useEffect(() => {
+    if (!busy) Animated.spring(x, { toValue: 0, useNativeDriver: false }).start();
+  }, [busy, x]);
+
+  const webKeys = Platform.OS === 'web'
+    ? ({ tabIndex: 0, onKeyDown: (e: any) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!busyRef.current) confirmRef.current(); } } } as any)
+    : {};
+
   return (
-    <View style={[styles.row, !last && styles.rowDivider]}>
-      <Avatar name={name} />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[type.body, { fontWeight: '600', color: color.ink }]} numberOfLines={1}>{name}</Text>
-        <Text style={type.small} numberOfLines={1}>{meta}</Text>
+    <View
+      accessible accessibilityRole="button" accessibilityLabel={label}
+      accessibilityActions={[{ name: 'activate' }]}
+      onAccessibilityAction={() => { if (!busyRef.current) confirmRef.current(); }}
+      onLayout={e => setWidth(e.nativeEvent.layout.width)}
+      style={styles.slideTrack}
+      {...webKeys}
+    >
+      <Animated.View style={[styles.slideFill, { width: Animated.add(x, KNOB + PAD * 2) }]} />
+      <Text style={styles.slideLabel} numberOfLines={1}>{label}</Text>
+      <Animated.View {...pan.panHandlers} style={[styles.slideKnob, { transform: [{ translateX: x }] }]}>
+        {busy ? <ActivityIndicator color="#6B6B72" size="small" /> : <ChevronRight size={22} color="#6B6B72" strokeWidth={2.5} />}
+      </Animated.View>
+    </View>
+  );
+}
+
+/**
+ * One row of the children / route list. When `onPickup` is given (the child is at the gate),
+ * the row offers a confirm-pickup control: a button on wide web screens, a slider on phones.
+ */
+export function StudentRow({ name, meta, status, last, onPickup, pickupBusy }: {
+  name: string; meta: string; status: DismissalStatus; last?: boolean; onPickup?: () => void; pickupBusy?: boolean;
+}) {
+  const { width } = useWindowDimensions();
+  const showButton = Platform.OS === 'web' && width >= 700;
+  return (
+    <View style={!last && styles.rowDivider}>
+      <View style={styles.row}>
+        <Avatar name={name} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[type.body, { fontWeight: '600', color: color.ink }]} numberOfLines={1}>{name}</Text>
+          <Text style={type.small} numberOfLines={1}>{meta}</Text>
+        </View>
+        <StatusPill status={status} />
+        {onPickup && showButton ? (
+          <Button label="Confirm pickup" size="sm" variant="success" icon={Check} loading={pickupBusy} onPress={onPickup} />
+        ) : null}
       </View>
-      <StatusPill status={status} />
+      {onPickup && !showButton ? (
+        <View style={{ paddingHorizontal: space.lg, paddingBottom: space.md }}>
+          <SlideToConfirm label={`Slide to confirm ${name.split(' ')[0]}’s pickup`} onConfirm={onPickup} busy={pickupBusy} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -489,6 +564,14 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 12, fontWeight: '600' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
+  slideTrack: { height: 48, borderRadius: radius.pill, backgroundColor: '#E4E4E7', borderWidth: 1, borderColor: '#C9C9CF', justifyContent: 'center', overflow: 'hidden' },
+  slideFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: '#D3D3D8', borderRadius: radius.pill },
+  slideLabel: { textAlign: 'center', fontSize: 14, fontWeight: '500', color: '#6B6B72', paddingLeft: 36, paddingRight: 12 },
+  slideKnob: {
+    position: 'absolute', left: 4, top: 3, width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFFFFF',
+    borderWidth: 1, borderColor: '#BDBDC4', alignItems: 'center', justifyContent: 'center',
+    ...Platform.select<any>({ web: { boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }, default: { elevation: 2 } }),
+  },
   rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.borderStrong },
 
   bigNumber: { fontSize: 44, lineHeight: 50, fontWeight: '700', letterSpacing: -1 },

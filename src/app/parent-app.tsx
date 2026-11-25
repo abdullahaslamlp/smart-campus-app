@@ -40,6 +40,9 @@ export default function ParentApp() {
   const [autoConfirmed, setAutoConfirmed] = useState(false);
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
   const trackerRef = useRef(new DepartureTracker());
+  const anyReceivedRef = useRef(false);
+  const [pickingId, setPickingId] = useState<string | null>(null);
+  const [leftWithUnconfirmed, setLeftWithUnconfirmed] = useState(false);
 
   // ── Refs for auto-poll ──
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -134,7 +137,12 @@ export default function ParentApp() {
       );
       // Clearly outside the pickup zone on consecutive checks → the children have been collected.
       const verdict = judgeFix(dist, loc.coords.accuracy, geofenceRadiusRef.current);
-      if (trackerRef.current.feed(verdict)) await markKidsReceived(true);
+      if (trackerRef.current.feed(verdict)) {
+        // If some children were already confirmed one by one, the rest are deliberately NOT
+        // auto-confirmed: they may still be waiting at the gate.
+        if (anyReceivedRef.current) setLeftWithUnconfirmed(true);
+        else await markKidsReceived(true);
+      }
     } catch (e: any) {
       if (isSessionError(e)) handleLogout();
       else console.warn('[AutoPoll] Location check failed:', e.message);
@@ -154,6 +162,8 @@ export default function ParentApp() {
       const stillWaiting = (data || []).some((s: any) => s.status === 'waiting' || s.status === 'arrived');
       const received = (data || []).some((s: any) => s.status === 'received');
       setIsCheckedIn(dispatched);
+      anyReceivedRef.current = received;
+      if (!dispatched) setLeftWithUnconfirmed(false);
       setIsReceived(received && !dispatched && !stillWaiting);
       // Restore last known distance; reset to null if admin cleared it
       const distRow = (data || []).find((s: any) => s.last_distance_meters != null);
@@ -243,6 +253,22 @@ export default function ParentApp() {
     fetchData();
   };
 
+  // Confirm one child (the others may not have reached the parent yet).
+  const handleChildPickedUp = async (studentId: string) => {
+    setPickingId(studentId);
+    setNotice(null);
+    try {
+      const { error } = await supabase.rpc('parent_mark_student_received', { p_token: token, p_student_id: studentId });
+      if (error) throw error;
+      anyReceivedRef.current = true;
+      await fetchData();
+    } catch (e: any) {
+      handleRpcError(e, 'Couldn’t confirm pickup');
+    } finally {
+      setPickingId(null);
+    }
+  };
+
   const handleKidsArrived = async () => {
     setKidsArrivedLoading(true);
     try {
@@ -289,7 +315,7 @@ export default function ParentApp() {
           <Text style={[type.small, { textAlign: 'center' }]}>
             {sentCount > 0 ? `${sentCount} ${sentCount === 1 ? 'child is' : 'children are'} on the way to the gate.` : 'The school has been notified.'}
           </Text>
-          <Button label="I have my children" variant="success" size="lg" full
+          <Button label={sentCount > 1 ? `I have all ${sentCount} children` : 'I have my children'} variant="success" size="lg" full
             onPress={handleKidsArrived} loading={kidsArrivedLoading} />
         </>
       );
@@ -314,6 +340,7 @@ export default function ParentApp() {
         <View style={{ gap: space.md }}>
           {notice ? <Notice tone="error">{notice}</Notice> : null}
           {locationWarning && isCheckedIn && !isReceived ? <Notice tone="warn">{locationWarning}</Notice> : null}
+          {leftWithUnconfirmed ? <Notice tone="warn">You’ve left the school area, but some children aren’t confirmed yet, so they still show at the gate. Confirm each child once they are with you.</Notice> : null}
           <PickupScene
             who="parent" vehicle="🚗" distance={distance} radiusM={geofenceRadius}
             kids={students.map(c => ({ id: c.id, name: c.name, status: c.status }))}
@@ -325,7 +352,7 @@ export default function ParentApp() {
             onLocate={checkRealGPS}
             onSimulate={branch?.demo_mode ? updateDistance : undefined}
             footnote={isCheckedIn && !isReceived
-              ? 'Keep this page open. When you drive away from the school, pickup is confirmed automatically.'
+              ? 'Keep this page open. If you drive away without confirming anyone, pickup is confirmed for you. Once you confirm a child yourself, the rest are left for you to confirm.'
               : undefined}
           />
         </View>
@@ -347,6 +374,8 @@ export default function ParentApp() {
                 meta={[child.grade, child.gate].filter(Boolean).join(' · ') || '—'}
                 status={child.status}
                 last={i === students.length - 1}
+                onPickup={child.status === 'dispatched' ? () => handleChildPickedUp(child.id) : undefined}
+                pickupBusy={pickingId === child.id}
               />
             ))}
           </Card>

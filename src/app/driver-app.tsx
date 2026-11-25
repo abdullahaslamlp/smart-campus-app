@@ -52,6 +52,9 @@ export default function DriverApp() {
   const [autoConfirmed, setAutoConfirmed] = useState(false);
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
   const trackerRef = useRef(new DepartureTracker());
+  const anyReceivedRef = useRef(false);
+  const [pickingId, setPickingId] = useState<string | null>(null);
+  const [leftWithUnconfirmed, setLeftWithUnconfirmed] = useState(false);
 
   // ── Refs for auto-poll ──
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -124,6 +127,7 @@ export default function DriverApp() {
   const dispatchedStudents = students.filter(s => s.status === 'dispatched');
   const receivedStudents = students.filter(s => s.status === 'received');
   const allDispatched = dispatchedStudents.length > 0 || receivedStudents.length > 0;
+  anyReceivedRef.current = receivedStudents.length > 0;
   const allReceived = dispatchedStudents.length === 0 && receivedStudents.length > 0 && students.filter(s => s.status === 'waiting').length === 0;
 
   // Poll often while students are on the way, rarely otherwise, and stop once everyone is collected.
@@ -175,7 +179,12 @@ export default function DriverApp() {
       );
       // Clearly outside the pickup zone on consecutive checks → the children are in the vehicle.
       const verdict = judgeFix(dist, loc.coords.accuracy, geofenceRadiusRef.current);
-      if (trackerRef.current.feed(verdict)) await markKidsReceived(true);
+      if (trackerRef.current.feed(verdict)) {
+        // If some children were already confirmed one by one, the rest are deliberately NOT
+        // auto-confirmed: they may still be waiting at the gate.
+        if (anyReceivedRef.current) setLeftWithUnconfirmed(true);
+        else await markKidsReceived(true);
+      }
     } catch (e: any) {
       if (isSessionError(e)) handleLogout();
       else console.warn('[AutoPoll] Driver location check failed:', e.message);
@@ -255,6 +264,22 @@ export default function DriverApp() {
     fetchData();
   };
 
+  // Confirm one child (the others may not have reached the vehicle yet).
+  const handleChildPickedUp = async (studentId: string) => {
+    setPickingId(studentId);
+    setNotice(null);
+    try {
+      const { error } = await supabase.rpc('driver_mark_student_received', { p_token: token, p_student_id: studentId });
+      if (error) throw error;
+      anyReceivedRef.current = true;
+      await fetchData();
+    } catch (e: any) {
+      handleRpcError(e, 'Couldn’t confirm pickup');
+    } finally {
+      setPickingId(null);
+    }
+  };
+
   const handleKidsArrived = async () => {
     if (!driverInfo) return;
     setKidsArrivedLoading(true);
@@ -300,7 +325,7 @@ export default function DriverApp() {
           <Text style={[type.small, { textAlign: 'center' }]}>
             {dispatchedCount} {dispatchedCount === 1 ? 'child is' : 'children are'} on the way to the gate.
           </Text>
-          <Button label={`Confirm pickup (${dispatchedCount})`} variant="success" size="lg" full
+          <Button label={dispatchedCount > 1 ? `Confirm all ${dispatchedCount} children` : 'Confirm pickup'} variant="success" size="lg" full
             onPress={handleKidsArrived} loading={kidsArrivedLoading} />
         </>
       );
@@ -328,6 +353,7 @@ export default function DriverApp() {
         <View style={{ gap: space.md }}>
           {notice ? <Notice tone="error">{notice}</Notice> : null}
           {locationWarning && dispatchedCount > 0 ? <Notice tone="warn">{locationWarning}</Notice> : null}
+          {leftWithUnconfirmed && dispatchedCount > 0 ? <Notice tone="warn">You’ve left the school area, but {dispatchedCount} {dispatchedCount === 1 ? 'child isn’t' : 'children aren’t'} confirmed yet, so they still show at the gate. Confirm each child once they are on board.</Notice> : null}
 
           <Card padded={false} style={{ flexDirection: 'row' }}>
             {[
@@ -357,7 +383,7 @@ export default function DriverApp() {
             onLocate={checkRealGPS}
             onSimulate={branch?.demo_mode ? updateDistance : undefined}
             footnote={dispatchedCount > 0
-              ? 'Keep this page open. When you drive away from the school, pickup is confirmed automatically.'
+              ? 'Keep this page open. If you drive away without confirming anyone, pickup is confirmed for you. Once you confirm a child yourself, the rest are left for you to confirm.'
               : undefined}
           />
         </View>
@@ -382,6 +408,8 @@ export default function DriverApp() {
                 meta={[item.grade, item.gate, item.parent_id].filter(Boolean).join(' · ')}
                 status={item.status}
                 last={i === students.length - 1}
+                onPickup={item.status === 'dispatched' ? () => handleChildPickedUp(item.id) : undefined}
+                pickupBusy={pickingId === item.id}
               />
             ))}
           </Card>

@@ -14,11 +14,11 @@ export type KidStatus = 'waiting' | 'dispatched' | 'arrived' | 'received';
 export interface SceneKid { id: string; name: string; status: KidStatus }
 
 const PALETTE = {
-  sky: '#E3F1FF',
-  zoneFill: 'rgba(52,178,107,0.16)', zoneLine: '#34B26B',
-  school: '#2F6FE4', schoolSoft: '#E3EEFF',
-  gate: '#F08A24', gateSoft: '#FFEBD2', gateInk: '#A5560A',
-  withYou: '#16A05B', withYouSoft: '#DDF5E7', withYouInk: '#12724A',
+  sky: '#ECE8DC',
+  zoneFill: 'rgba(126,143,107,0.20)', zoneLine: '#7E8F6B',
+  school: '#3F5870', schoolSoft: '#E3E8EE',
+  gate: '#A8683A', gateSoft: '#F1E3D6', gateInk: '#7A4A25',
+  withYou: '#5B7F5E', withYouSoft: '#E1EBE2', withYouInk: '#3E6142',
 };
 
 // Stable emoji per child (same child, same emoji, whatever the order).
@@ -182,8 +182,8 @@ function Chip({ bg, fg, icon, label, n }: { bg: string; fg: string; icon: string
 }
 
 const shadow = Platform.select<any>({
-  web: { boxShadow: '0 4px 14px rgba(47,111,228,0.28)' },
-  default: { elevation: 5, shadowColor: PALETTE.school, shadowOpacity: 0.28, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  web: { boxShadow: '0 3px 10px rgba(40,50,60,0.22)' },
+  default: { elevation: 5, shadowColor: '#000000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
 });
 
 const styles = StyleSheet.create({
