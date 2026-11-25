@@ -6,6 +6,7 @@ import { supabase } from '../../supabase';
 import { getParentSession, setParentSession } from './parent-login';
 import { isSessionError, rpcMessage, useBranch, usePoll } from '../lib/tenant';
 import { DepartureTracker, POLL_SECONDS, haversine, judgeFix } from '../lib/departure';
+import { PickupScene } from '../lib/pickup-scene';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
   StudentRow, color, space, type,
@@ -147,10 +148,13 @@ export default function ParentApp() {
       const data: any[] = state?.students ?? [];
       setStudents(data);
       // Sync status flags from DB — resets when admin clears status
+      // Per-child: one child picked up (e.g. sent out by the admin) must not hide the
+      // check-in for siblings who are still waiting.
       const dispatched = (data || []).some((s: any) => s.status === 'dispatched');
+      const stillWaiting = (data || []).some((s: any) => s.status === 'waiting' || s.status === 'arrived');
       const received = (data || []).some((s: any) => s.status === 'received');
-      setIsCheckedIn(dispatched || received);
-      setIsReceived(received);
+      setIsCheckedIn(dispatched);
+      setIsReceived(received && !dispatched && !stillWaiting);
       // Restore last known distance; reset to null if admin cleared it
       const distRow = (data || []).find((s: any) => s.last_distance_meters != null);
       setDistance(distRow ? distRow.last_distance_meters : null);
@@ -299,17 +303,21 @@ export default function ParentApp() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.bg }}>
+    <View style={{ flex: 1, backgroundColor: color.sky }}>
       <AppBar
         title={`Hello, ${firstName}`}
         subtitle={branch ? `${branch.school_name} · ${branch.name}` : currentParentId}
         right={<Button label="Sign out" variant="ghost" size="sm" onPress={handleLogout} />}
       />
 
-      <Page bottomInset={140}>
+      <Page bottomInset={140} background={color.sky}>
         <View style={{ gap: space.md }}>
           {notice ? <Notice tone="error">{notice}</Notice> : null}
           {locationWarning && isCheckedIn && !isReceived ? <Notice tone="warn">{locationWarning}</Notice> : null}
+          <PickupScene
+            who="parent" vehicle="🚗" distance={distance} radiusM={geofenceRadius}
+            kids={students.map(c => ({ id: c.id, name: c.name, status: c.status }))}
+          />
           <DistancePanel
             distance={distance}
             radius={geofenceRadius}

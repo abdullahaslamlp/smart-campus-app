@@ -6,6 +6,7 @@ import { supabase } from '../../supabase';
 import { getDriverSession, setDriverSession } from './driver-login';
 import { isSessionError, rpcMessage, useBranch, usePoll } from '../lib/tenant';
 import { DepartureTracker, POLL_SECONDS, haversine, judgeFix } from '../lib/departure';
+import { PickupScene } from '../lib/pickup-scene';
 import {
   ActionBar, AppBar, Button, Card, DistancePanel, Loading, Notice, Page, PausedNotice, SectionHeader,
   StudentRow, color, space, type,
@@ -316,14 +317,14 @@ export default function DriverApp() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.bg }}>
+    <View style={{ flex: 1, backgroundColor: color.sky }}>
       <AppBar
         title={driverInfo.driverName}
         subtitle={[driverInfo.vehicleType, driverInfo.vehicleNumber, branch?.name].filter(Boolean).join(' · ')}
         right={<Button label="Sign out" variant="ghost" size="sm" onPress={handleLogout} />}
       />
 
-      <Page bottomInset={140}>
+      <Page bottomInset={140} background={color.sky}>
         <View style={{ gap: space.md }}>
           {notice ? <Notice tone="error">{notice}</Notice> : null}
           {locationWarning && dispatchedCount > 0 ? <Notice tone="warn">{locationWarning}</Notice> : null}
@@ -344,6 +345,11 @@ export default function DriverApp() {
             ))}
           </Card>
 
+          <PickupScene
+            who="driver" distance={distance} radiusM={geofenceRadius}
+            vehicle={driverInfo.vehicleType === 'Rickshaw' ? '🛺' : driverInfo.vehicleType === 'Taxi/Carpool' ? '🚕' : '🚐'}
+            kids={students.map(c => ({ id: c.id, name: c.name, status: c.status }))}
+          />
           <DistancePanel
             distance={distance}
             radius={geofenceRadius}

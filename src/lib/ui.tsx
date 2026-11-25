@@ -20,6 +20,7 @@ export const ICON_STROKE = 2;
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 export const color = {
   bg: '#F6F7F9',
+  sky: '#EAF5FF',
   surface: '#FFFFFF',
   sunken: '#F0F2F5',
   border: '#E3E6EB',
@@ -58,13 +59,14 @@ const tabular = Platform.select<any>({ web: { fontVariant: ['tabular-nums'] }, d
 
 // ─── Layout ───────────────────────────────────────────────────────────────────
 /** Full-height page with a centred content column. */
-export function Page({ children, maxWidth = 560, style, scroll = true, bottomInset = 0 }: {
-  children: ReactNode; maxWidth?: number; style?: StyleProp<ViewStyle>; scroll?: boolean; bottomInset?: number;
+export function Page({ children, maxWidth = 560, style, scroll = true, bottomInset = 0, background }: {
+  children: ReactNode; maxWidth?: number; style?: StyleProp<ViewStyle>; scroll?: boolean; bottomInset?: number; background?: string;
 }) {
   const inner = <View style={[{ width: '100%', maxWidth, alignSelf: 'center' }, style]}>{children}</View>;
-  if (!scroll) return <View style={styles.page}>{inner}</View>;
+  const bg = background ? { backgroundColor: background } : null;
+  if (!scroll) return <View style={[styles.page, bg]}>{inner}</View>;
   return (
-    <ScrollView style={styles.page} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl + bottomInset }}
+    <ScrollView style={[styles.page, bg]} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl + bottomInset }}
       keyboardShouldPersistTaps="handled">
       {inner}
     </ScrollView>
